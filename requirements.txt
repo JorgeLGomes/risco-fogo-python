@@ -1,0 +1,7 @@
+numpy
+xarray
+netCDF4
+rasterio
+
+# apenas para o teste de validacao (teste_rf.py)
+scipy

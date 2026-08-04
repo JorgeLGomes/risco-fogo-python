@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+*.nc
+*.tif
+log.falta.arquivos.prev.prec.txt
