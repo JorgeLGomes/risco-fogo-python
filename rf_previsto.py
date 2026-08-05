@@ -72,7 +72,7 @@ import rf_fontes
 # Valores padrão (mesma estrutura de diretórios da produção)
 # ---------------------------------------------------------------------------
 
-BASE_PADRAO = "/home/queimadas/INPE_FireRiskModel"
+BASE_PADRAO = rf_config.BASE_PADRAO   # ver rf_config.py (RF_BASE/--config)
 PRODUTO_PADRAO = "RF_PREV_CUSTOM"   # subdiretório de saída em data/output/2.2/
 RB_MAXIMO_PADRAO = 0.9
 JOBS_PADRAO = 4

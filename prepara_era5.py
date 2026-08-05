@@ -352,10 +352,10 @@ def main():
     print(f"Destino: {rf_config.resolve(base, caminhos['era5_dir'])}")
 
     if not args.config and not args.base and base == rf_config.BASE_PADRAO:
-        print("AVISO: rodando com o diretório base PADRÃO da produção "
+        print(f"AVISO: usando o diretório base padrão "
               f"({rf_config.BASE_PADRAO}).\n"
-              "       Se este não é o destino desejado, use "
-              "--config config.yaml (ou --base DIR).", file=sys.stderr)
+              "       Para outro destino, use --config config.yaml, "
+              "--base DIR ou a variável RF_BASE.", file=sys.stderr)
     if pendentes and not args.simular:
         try:
             os.makedirs(rf_config.resolve(base, caminhos["era5_dir"]),

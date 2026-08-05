@@ -45,7 +45,13 @@ except ImportError:          # PyYAML é opcional se o arquivo for JSON
 # Padrões (idênticos aos valores da produção)
 # ---------------------------------------------------------------------------
 
-BASE_PADRAO = "/home/queimadas/INPE_FireRiskModel"
+# Diretório base padrão, usado quando não há --base, --config nem a
+# variável de ambiente RF_BASE. Precedência:
+#   --base (CLI)  >  base do --config  >  RF_BASE (ambiente)  >  este valor
+# Na produção do Queimadas o base é /home/queimadas/INPE_FireRiskModel
+# (valor mantido nos scripts legados rf_previsto_1_5dias/1_2_semanas).
+BASE_PADRAO = (os.environ.get("RF_BASE")
+               or "/p/projetos/grpeta/Team/jorge.gomes/risco-fogo-python")
 
 CAMINHOS_PADRAO = {
     "imerg_dir": "data/output/2.2/Precipitation-2_2",

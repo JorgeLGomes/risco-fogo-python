@@ -343,10 +343,10 @@ def main():
           f"lon [{dominio[2]}, {dominio[3]}]")
 
     if not args.config and not args.base and base == rf_config.BASE_PADRAO:
-        print("AVISO: rodando com o diretório base PADRÃO da produção "
+        print(f"AVISO: usando o diretório base padrão "
               f"({rf_config.BASE_PADRAO}).\n"
-              "       Se este não é o destino desejado, use "
-              "--config config.yaml (ou --base DIR).", file=sys.stderr)
+              "       Para outro destino, use --config config.yaml, "
+              "--base DIR ou a variável RF_BASE.", file=sys.stderr)
 
     # Falha cedo se o destino não for gravável (antes de baixar qualquer
     # coisa) — evita descobrir o problema só no fim do primeiro download.

@@ -345,7 +345,7 @@ man.push(
   )
 );
 man.push(p(""));
-man.push(p("Todos os caminhos partem de /home/queimadas/INPE_FireRiskModel e estão definidos como constantes no topo de cada script (seção \"Configurações\"). Para rodar em outra máquina, basta editar a constante BASE."));
+man.push(p("Todos os caminhos partem do diretório base. O padrão embutido (em rf_config.py) é /p/projetos/grpeta/Team/jorge.gomes/risco-fogo-python; a precedência é --base (CLI) > base do --config > variável de ambiente RF_BASE > padrão embutido. Exceção: os dois scripts legados (rf_previsto_1_5dias.py e rf_previsto_1_2_semanas.py) mantêm a constante BASE = /home/queimadas/INPE_FireRiskModel da produção, editável no topo de cada um."));
 
 man.push(h1("3. Instalação"));
 man.push(p("Copie os arquivos para o diretório de scripts do modelo (os testes são opcionais):"));
@@ -426,7 +426,7 @@ man.push(
       ["--de / --ate / --passo", "Intervalo de horizontes relativo (pode ser combinado com --horizontes)", "passo 6h"],
       ["--rb-max X", "Risco básico máximo (o produto semanal usa 0.8)", "0.9"],
       ["--produto NOME", "Subdiretório de saída em data/output/2.2/", "RF_PREV_CUSTOM"],
-      ["--base DIR", "Diretório base do modelo (permite rodar fora da produção)", "/home/queimadas/INPE_FireRiskModel"],
+      ["--base DIR", "Diretório base do modelo (precedência: --base > base do --config > variável RF_BASE > padrão embutido; produção: /home/queimadas/INPE_FireRiskModel)", "/p/projetos/grpeta/Team/jorge.gomes/risco-fogo-python"],
       ["--fallback-gfs", "Se o GFS do horário exato não existir, usa o horário anterior do mesmo dia (generaliza a cópia 12 UTC → 18 UTC do produto semanal)", "desativado"],
       ["--sem-tif", "Gera apenas os NetCDF, sem GeoTIFF", "TIF ativado"],
       ["--fogograma", "Gera também um único NetCDF com todos os horizontes", "desativado"],

@@ -10,7 +10,10 @@
 # ============================================================================
 
 # Diretório base do modelo. Caminhos relativos abaixo são ancorados aqui.
-base: /home/queimadas/INPE_FireRiskModel
+# (Sem --config, o padrão embutido é o mesmo valor abaixo; a variável de
+#  ambiente RF_BASE também o sobrepõe. Na produção do Queimadas:
+#  /home/queimadas/INPE_FireRiskModel)
+base: /p/projetos/grpeta/Team/jorge.gomes/risco-fogo-python
 
 # ----------------------------------------------------------------------------
 # Onde estão os dados de entrada

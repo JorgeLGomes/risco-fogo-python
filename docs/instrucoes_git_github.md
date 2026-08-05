@@ -143,17 +143,20 @@ git commit -m "Adiciona ERA5 (prepara_era5) e Risco de Fogo observado (rf_observ
 git push origin main
 ```
 
-Se o commit acima já foi feito, commite só a melhoria dos preparos:
+Se o commit acima já foi feito, commite só as melhorias seguintes:
 
 ```powershell
-git add prepara_imerg.py prepara_gfs.py prepara_era5.py
-git commit -m "Melhora progresso e avisos dos scripts de preparo
+git add -A
+git commit -m "Muda o base padrao para o diretorio do ian01 e melhora os preparos
 
+- rf_config: BASE_PADRAO agora e /p/projetos/grpeta/Team/jorge.gomes/
+  risco-fogo-python (sobreposto por --base, base do --config ou variavel
+  de ambiente RF_BASE); producao continua nos scripts legados
 - prepara_imerg: imprime cada dia concluido (contador, MB, tempo decorrido
   e estimativa do restante) em vez de a cada 10 dias
-- prepara_imerg/gfs/era5: avisam quando rodam com o base PADRAO da
-  producao sem --config/--base, e falham cedo (antes de baixar) se o
-  destino nao for gravavel, sugerindo --config config.yaml"
+- prepara_imerg/gfs/era5: avisam qual base esta em uso e falham cedo
+  (antes de baixar) se o destino nao for gravavel
+- config_exemplo.yaml e manual atualizados"
 
 git push origin main
 ```
