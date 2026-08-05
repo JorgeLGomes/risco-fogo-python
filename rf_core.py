@@ -122,6 +122,11 @@ def ler_precipitacao(lista_arquivos, nome_var="prec"):
 
     Após a inversão, o índice 0 corresponde ao tempo mais recente
     (arquivo do GFS) e o último índice ao dia mais antigo.
+
+    Arquivos em GRADE DIFERENTE da do primeiro (ex.: GFS nativo de 0,25°
+    junto com IMERG de 0,1°) são regradeados por interpolação bilinear
+    para a grade de referência — na operação original essa interpolação
+    era feita numa etapa anterior do fluxo.
     """
     campos = []
     lat = lon = None
@@ -131,10 +136,20 @@ def ler_precipitacao(lista_arquivos, nome_var="prec"):
             dados = np.asarray(var.values, dtype=np.float32)
             if dados.ndim == 2:      # arquivo sem dimensão tempo
                 dados = dados[np.newaxis, :, :]
-            campos.append(dados)
-            if lat is None:
-                lat = np.asarray(ds["lat"].values, dtype=np.float64)
-                lon = np.asarray(ds["lon"].values, dtype=np.float64)
+            la = np.asarray(ds["lat"].values, dtype=np.float64)
+            lo = np.asarray(ds["lon"].values, dtype=np.float64)
+
+        if la.size > 1 and la[0] > la[-1]:    # norte->sul: inverte
+            la = la[::-1]
+            dados = dados[:, ::-1, :]
+
+        if lat is None:
+            lat, lon = la, lo                 # grade de referência (1º arquivo)
+        elif (la.size != lat.size or lo.size != lon.size
+              or not (np.allclose(la, lat) and np.allclose(lo, lon))):
+            dados = np.stack([interp_bilinear(dados[t], la, lo, lat, lon)
+                              for t in range(dados.shape[0])])
+        campos.append(dados)
 
     precip = np.concatenate(campos, axis=0)   # concatenação ("cat" do NCL)
     precip = precip[::-1, :, :]               # inversão da dimensão tempo
