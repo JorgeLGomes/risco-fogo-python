@@ -4,6 +4,7 @@ netCDF4
 rasterio
 pyyaml
 pygrib     # leitura GRIB2 do prepara_gfs.py
+cdsapi     # download da ERA5 (prepara_era5.py) — requer ~/.cdsapirc
 
 # apenas para o teste de validacao (teste_rf.py)
 scipy

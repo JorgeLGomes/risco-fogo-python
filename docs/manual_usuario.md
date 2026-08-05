@@ -2,7 +2,7 @@
 
 ## Risco de Fogo Previsto em Python — INPE_FireRiskModel v2.2
 
-**Versão:** 1.8 · 5 de agosto de 2026
+**Versão:** 1.9 · 5 de agosto de 2026
 **Substitui:** `rf_previsto_1-5dias_2023.sh` e `rf_previsto_1-2_semanas_2024.sh` (bash + NCL)
 
 ---
@@ -14,6 +14,7 @@ Este pacote calcula o Risco de Fogo (RF) previsto em resolução de 1 km para a 
 - **`rf_previsto_1_5dias.py`** — gera 19 previsões, de +6 h até +4 dias 18 UTC, a cada 6 horas (produto `RF_PREV`).
 - **`rf_previsto_1_2_semanas.py`** — gera 2 previsões, para +7 e +14 dias às 18 UTC (produto `RF_PREV_SEMANAL`).
 - **`rf_previsto.py`** — script genérico: gera o RF para **qualquer horizonte de previsão** e **diferentes fontes de dados** (GFS, Eta, BESM) informados na linha de comando (seção 5).
+- **`rf_observado.py`** — RF **observado** dos últimos dias, semanas ou meses, com IMERG + ERA5 (seção 6.4).
 
 Ambos usam o módulo comum **`rf_core.py`** e produzem, para cada horário de previsão, um NetCDF (`RF.PREV.YYYYMMDDHH.nc`) e um GeoTIFF (`RF.PREV.YYYYMMDDHH.tif`), além dos produtos derivados (links D1–D5, cópias T0–T4/T7/T14, fogograma).
 
@@ -61,11 +62,15 @@ rf_previsto_1_2_semanas.py
 rf_previsto.py
 prepara_gfs.py
 prepara_imerg.py
+prepara_era5.py
+rf_observado.py
 teste_rf.py
 teste_rf_previsto.py
 teste_rf_multifonte.py
 teste_prepara_gfs.py
 teste_prepara_imerg.py
+teste_prepara_era5.py
+teste_rf_observado.py
 ```
 
 Os scripts devem ficar no mesmo diretório (os orquestradores fazem `import rf_core`). Se desejar, torne-os executáveis:
@@ -267,9 +272,9 @@ Semântica: **topografia desligada** zera a correção (FTOP≡1) e dispensa o a
 
 Observação: como a saída `_SEMVEG` fica na grade da precipitação (≈10 km) e sem máscara d'água, ela não é diretamente comparável ponto a ponto com a referência de 1 km — use-a para avaliar padrões espaciais e magnitudes, ou compare após regradear a referência para a mesma grade.
 
-## 6. Preparo dos dados de entrada (prepara_gfs.py e prepara_imerg.py)
+## 6. Preparo dos dados de entrada e RF observado (prepara_gfs, prepara_imerg, prepara_era5, rf_observado)
 
-Dois scripts geram o banco de dados de entrada do RF sem depender da área de produção do Programa Queimadas: o `prepara_gfs.py` (previsões) e o `prepara_imerg.py` (precipitação observada). Com eles, o fluxo completo de uma rodada é:
+Três scripts geram o banco de dados de entrada do RF sem depender da área de produção do Programa Queimadas: o `prepara_gfs.py` (previsões), o `prepara_imerg.py` (precipitação observada) e o `prepara_era5.py` (temperatura/umidade da reanálise ERA5, seção 6.3). Com os dois primeiros, o fluxo completo de uma rodada prevista é:
 
 ```bash
 python3 prepara_imerg.py --config config.yaml         # 1. IMERG observado (119 dias)
@@ -326,6 +331,50 @@ python3 prepara_imerg.py --simular                 # confere período e URLs
 ```
 
 O script pula dias já existentes (rodar de novo completa o que faltou; `--sobrescrever` regrava), tenta as letras de versão da NASA automaticamente (V07D→V07A), baixa em paralelo (`--jobs`) e trata a transposição lon/lat e os valores inválidos do formato IMERG. Cada dia baixa ~25 MB do arquivo global e grava ~2–3 MB recortados. Produtos: `early` (padrão), `late` (~14 h) e `final` (pesquisa, meses de latência — ideal para períodos históricos).
+
+### 6.3 ERA5 (prepara_era5.py)
+
+O `prepara_era5.py` baixa a reanálise **ERA5** (Copernicus/ECMWF, 0,25°) e converte para o padrão de leitura do RF: temperatura a 2 m, **umidade relativa a 2 m calculada da temperatura + ponto de orvalho** (fórmula de Magnus, Alduchov & Eskridge 1996) e vento a 10 m (u10/v10, para uso futuro). Para cada dia são gravados dois arquivos no destino da chave `era5_dir` do `config.yaml`:
+
+| Arquivo | Variáveis |
+|---|---|
+| `ERA5.OBS.TEMP2m.RH2m.{data}{hora}.nc` | `TEMP2m` (K) e `RH2m` (%) — lido por `rf_core.ler_temp_ur`, mesmo formato do GFS |
+| `ERA5.OBS.U10m.V10m.{data}{hora}.nc` | `U10m` e `V10m` (m/s) |
+
+**Pré-requisito (uma única vez):** conta gratuita no CDS (https://cds.climate.copernicus.eu), aceitar no site a licença do dataset *ERA5 hourly data on single levels*, instalar a API (`python3 -m pip install cdsapi`) e criar o `~/.cdsapirc` (com `chmod 600`):
+
+```
+url: https://cds.climate.copernicus.eu/api
+key: SEU-TOKEN-PESSOAL
+```
+
+Modos de uso:
+
+```bash
+python3 prepara_era5.py --config config.yaml                 # últimos 7 dias disponíveis
+python3 prepara_era5.py --inicio 20260601 --fim 20260731     # período explícito
+python3 prepara_era5.py --data-final 20260730 --dias 120     # janela p/ rf_observado
+python3 prepara_era5.py --simular                            # só o plano (sem baixar)
+```
+
+A ERA5 tem atraso de ~5 dias (dias recentes vêm do produto preliminar ERA5T, tratado automaticamente), por isso a janela padrão termina 6 dias atrás. As requisições ao CDS são agrupadas por mês (mais eficientes na fila do Copernicus — cada uma pode esperar alguns minutos); a hora da análise é configurável (`--hora`, padrão 18 UTC, a mesma dos produtos do RF), dias completos são pulados e `--sobrescrever` regrava.
+
+### 6.4 Risco de Fogo observado (rf_observado.py)
+
+O `rf_observado.py` calcula o **RF observado** de dias que já passaram — últimos dias, semanas ou meses — usando apenas observações: a série completa de 120 dias do IMERG (incluindo o próprio dia analisado) e a T2m/UR2m da ERA5 na hora da análise. É a mesma formulação do modelo (rb_max 0,9 e fatores FU/FT/FLAT/FTOP), o que permite reconstituir o histórico recente e comparar com as previsões (`RF.PREV.*` × `RF.OBS.*`).
+
+```bash
+python3 rf_observado.py --config config.yaml --dias 7        # últimos 7 dias
+python3 rf_observado.py --config config.yaml --semanas 2     # últimas 2 semanas
+python3 rf_observado.py --config config.yaml --meses 3       # últimos 3 meses-calendário
+python3 rf_observado.py --config config.yaml --de 20260601 --ate 20260731
+python3 rf_observado.py --config config.yaml --dias 7 --simular   # confere as entradas
+
+# Sem os arquivos estáticos (vegetação/topografia indisponíveis)
+python3 rf_observado.py --config config.yaml --dias 7 --sem-vegetacao --sem-topografia
+```
+
+O fluxo completo é: `prepara_imerg.py` (precipitação do período **+ 119 dias anteriores**) → `prepara_era5.py` (T/UR do período) → `rf_observado.py`. O `--simular` confere as entradas e aponta o que falta; dias com entradas incompletas são pulados com aviso (e o comando de preparo sugerido), sem interromper os demais. As saídas `RF.OBS.{data}{hora}.nc` (e `.tif`) vão para `data/output/2.2/RF_OBS/netcdf` (produto configurável via `--produto`, com os sufixos automáticos `_SEMVEG`/`_SEMTOPO` da análise de sensibilidade). Demais opções como no `rf_previsto.py`: `--hora`, `--rb-max`, `--jobs`, `--sem-tif`, `--classe-veg`, `--data-final` (aceita `hoje`; padrão 6 dias atrás, pelo atraso da ERA5).
 
 ## 7. Saídas
 
@@ -387,6 +436,8 @@ python3 teste_rf_previsto.py   # valida o script genérico de ponta a ponta
 python3 teste_rf_multifonte.py # valida o modo multifonte (Eta 13m, BESM 12h, JSON)
 python3 teste_prepara_gfs.py   # valida o preparo do GFS (idx, baldes, NetCDF)
 python3 teste_prepara_imerg.py # valida o preparo do IMERG (conversão, caminhos)
+python3 teste_prepara_era5.py  # valida o preparo da ERA5 (UR de T+Td, conversão)
+python3 teste_rf_observado.py  # valida o RF observado de ponta a ponta
 ```
 
 O primeiro teste cria dados sintéticos em `/tmp/teste_rf`, executa o cálculo completo e compara com uma implementação de referência fiel ao NCL; a saída esperada termina com `TODOS OS TESTES PASSARAM`. O segundo monta uma árvore com a estrutura de diretórios da produção em `/tmp/teste_generico` e executa o `rf_previsto.py` real em cinco cenários (lista, intervalo, fallback do GFS, horizonte absoluto e falha controlada).

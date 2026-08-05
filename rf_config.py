@@ -54,6 +54,9 @@ CAMINHOS_PADRAO = {
     "mapa_vegetacao": "data/input/Veg_Map_2020/"
                       "Merge_MapBiomas_V5_IGBP_C6_{ano_veg}.nc",
     "topografia": "data/input/topografia/GeoTOPOAmericaSulCentral_V3.nc",
+    "era5_dir": "data/output/2.2/ERA5/netcdf",
+    "era5_padrao": "ERA5.OBS.TEMP2m.RH2m.{data}{hora}.nc",
+    "era5_padrao_vento": "ERA5.OBS.U10m.V10m.{data}{hora}.nc",
     "log": "log",
 }
 
@@ -136,3 +139,12 @@ def caminho_imerg(base, caminhos, dia):
         ano=ymd[:4], mes=ymd[4:6], dia=ymd[6:8])
     nome = caminhos["imerg_padrao"].format(data=ymd)
     return os.path.join(resolve(base, caminhos["imerg_dir"]), sub, nome)
+
+
+def caminho_era5(base, caminhos, dia, hora, vento=False):
+    """Caminho completo do arquivo ERA5 do dia (datetime) na hora HH.
+    ``vento=True`` devolve o arquivo de U10m/V10m em vez de T/UR."""
+    chave = "era5_padrao_vento" if vento else "era5_padrao"
+    nome = caminhos[chave].format(data=dia.strftime("%Y%m%d"),
+                                  hora=f"{int(hora):02d}")
+    return os.path.join(resolve(base, caminhos["era5_dir"]), nome)

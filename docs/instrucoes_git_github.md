@@ -123,30 +123,27 @@ cd C:\Users\jorge\Claude\Projects\risco-fogo-python
 
 git status
 git add -A
-git commit -m "Sensibilidade sem arquivos estaticos e rodada diaria via YAML
+git commit -m "Adiciona ERA5 (prepara_era5) e Risco de Fogo observado (rf_observado)
 
-- rf_core: com usar_vegetacao=False o mapa NAO e lido; classe uniforme em
-  todos os pontos e saida na grade da precipitacao, sem mascara d'agua;
-  topografia (se ligada) regradeada automaticamente (ler_topografia_grade);
-  com --sem-vegetacao --sem-topografia o RF roda sem NENHUM arquivo estatico
-- rf_previsto: --data-final aceita 'hoje'/'auto'/'sistema' (data do sistema),
-  permitindo rodada diaria operacional definida so no YAML (data_final: hoje
-  + horizontes pre-estabelecidos)
-- config_exemplo.yaml: chaves de sensibilidade (sem_vegetacao,
-  sem_topografia, classe_veg) comentadas com as combinacoes de rodada
-- Sem fonte definida (YAML ou CLI) a rodada volta ao GFS (composicao
-  legada): fonte comentada no config_exemplo.yaml e novo valor
-  --fonte padrao (legado/nenhuma) para sobrepor a fonte do YAML
-- Manual v1.8: secoes 5.2, 5.5 e 5.6 atualizadas"
+- prepara_era5.py: baixa t2m, td2m, u10 e v10 da ERA5 (API do CDS/
+  Copernicus, requisicoes agrupadas por mes, dominio recortado), calcula a
+  UR de t+td (formula de Magnus) e grava no padrao de leitura do RF:
+  ERA5.OBS.TEMP2m.RH2m.{data}{hora}.nc e ERA5.OBS.U10m.V10m.{data}{hora}.nc
+- rf_observado.py: RF OBSERVADO com IMERG (120 dias, incluindo o dia
+  analisado) + ERA5 na hora da analise (18 UTC); periodos --dias/--semanas/
+  --meses/--de+--ate; --simular confere as entradas; dias incompletos sao
+  pulados com aviso; saidas RF.OBS.* em data/output/2.2/RF_OBS; suporta
+  --sem-vegetacao/--sem-topografia
+- rf_config: caminhos era5_dir/era5_padrao/era5_padrao_vento e
+  caminho_era5(); config_exemplo.yaml atualizado
+- requirements.txt: + cdsapi
+- Testes: teste_prepara_era5.py e teste_rf_observado.py
+- Manual v1.9: secoes 6.3 (ERA5) e 6.4 (RF observado)"
 
 git push origin main
 ```
 
 E no servidor (ian01): `git pull`.
-
-Se o commit "Dispensa o mapa de vegetacao..." já tiver sido feito antes,
-este novo `git add -A` + commit leva apenas o restante — a mensagem acima
-continua válida.
 
 ## 6. Comandos úteis do dia a dia
 

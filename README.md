@@ -15,6 +15,8 @@ rf_fontes.py                  # Camada de fontes: config por fonte, agregação 
 rf_config.py                  # Configuração YAML dos dados de entrada (--config)
 prepara_gfs.py                # Download do GFS (fast download .idx / grib filter — pós-SCN 25-81)
 prepara_imerg.py              # Download/conversão do IMERG Early Daily V07 (GES DISC, Earthdata)
+prepara_era5.py               # Download/conversão da ERA5: t2m, ur2m (de t+td), u10, v10 (CDS/Copernicus)
+rf_observado.py               # RF OBSERVADO (IMERG + ERA5): últimos dias, semanas ou meses
 teste_rf.py                   # Teste de validação (dados sintéticos + referência fiel ao NCL)
 teste_rf_previsto.py          # Teste de ponta a ponta do script genérico
 teste_rf_multifonte.py        # Teste do modo multifonte (Eta 13m, BESM 12h, fonte via JSON)
@@ -61,6 +63,11 @@ python3 rf_previsto.py --horizontes 3d --sem-topografia
 python3 rf_previsto.py --horizontes 3d --sem-vegetacao --classe-veg 4
 # --sem-vegetacao dispensa o mapa (saída na grade da precipitação);
 # com --sem-topografia junto, roda sem NENHUM arquivo estático
+
+# RF OBSERVADO (IMERG + ERA5): últimos dias, semanas ou meses
+python3 prepara_era5.py  --config config.yaml --dias 7    # T/UR da ERA5 (requer ~/.cdsapirc)
+python3 rf_observado.py  --config config.yaml --dias 7
+python3 rf_observado.py  --config config.yaml --meses 3 --sem-vegetacao --sem-topografia
 ```
 
 ## Validação
