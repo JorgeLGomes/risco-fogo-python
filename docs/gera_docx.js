@@ -420,7 +420,7 @@ man.push(
     ["Opção", "Efeito", "Padrão"],
     [
       ["--horizontes LISTA", "Horizontes separados por vírgula (Nh, Nd, Nm, combinações ou YYYYMMDDHH)", "—"],
-      ["--fonte NOME", "Fonte de previsão: gfs, eta, besm ou outra definida via JSON (seção 5.4)", "composição legada (GFS)"],
+      ["--fonte NOME", "Fonte de previsão: gfs, eta, besm ou outra definida via JSON (seção 5.4); padrao (ou legado/nenhuma) força a composição legada do GFS mesmo com fonte no YAML", "composição legada (GFS)"],
       ["--config-fontes ARQ", "Arquivo JSON que ajusta/acrescenta fontes (nomes de arquivos, variáveis, frequência)", "—"],
       ["--de / --ate / --passo", "Intervalo de horizontes relativo (pode ser combinado com --horizontes)", "passo 6h"],
       ["--rb-max X", "Risco básico máximo (o produto semanal usa 0.8)", "0.9"],
@@ -511,6 +511,7 @@ man.push(...codigo([
   "python3 rf_previsto.py --config config.yaml --horizontes 6m   # CLI prevalece",
 ]));
 man.push(p("Com data_final: hoje (equivalente a omitir a chave) e horizontes (ou de/ate/passo) declarados no arquivo, o YAML define uma rodada diária operacional: cada execução usa a data corrente do sistema e produz sempre os mesmos horizontes pré-estabelecidos — ideal para agendar no cron. As chaves de sensibilidade permitem manter arquivos separados por experimento (ex.: config.yaml de referência e config_semveg.yaml com sem_vegetacao: true), sem alterar a linha de comando."));
+man.push(p("Atenção com a chave fonte: sem ela (e sem --fonte na CLI), a rodada usa a composição original dos produtos operacionais com o GFS — este é o padrão. Se o YAML declarar fonte: besm (ou outra), essa fonte vale em toda execução que não passar --fonte na linha de comando (precedência CLI > YAML). Para forçar o GFS sem editar o arquivo, use --fonte padrao (aceita também legado/nenhuma). Por isso o config_exemplo.yaml traz a chave comentada: declare-a apenas em arquivos dedicados a uma fonte específica (ex.: config_besm.yaml)."));
 man.push(p("O arquivo config_exemplo.yaml traz o modelo completo comentado; as seções são validadas na leitura (chave desconhecida gera erro com a lista das válidas). Requer PyYAML (pip install pyyaml) — arquivos .json funcionam sem ele."));
 man.push(h2("5.6 Análise de sensibilidade (--sem-vegetacao / --sem-topografia)"));
 man.push(p("Para medir o impacto individual de cada componente do modelo, as duas chaves podem ser desligadas de forma independente (e combinadas):"));

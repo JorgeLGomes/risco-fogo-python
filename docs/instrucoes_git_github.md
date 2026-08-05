@@ -134,6 +134,9 @@ git commit -m "Sensibilidade sem arquivos estaticos e rodada diaria via YAML
   + horizontes pre-estabelecidos)
 - config_exemplo.yaml: chaves de sensibilidade (sem_vegetacao,
   sem_topografia, classe_veg) comentadas com as combinacoes de rodada
+- Sem fonte definida (YAML ou CLI) a rodada volta ao GFS (composicao
+  legada): fonte comentada no config_exemplo.yaml e novo valor
+  --fonte padrao (legado/nenhuma) para sobrepor a fonte do YAML
 - Manual v1.8: secoes 5.2, 5.5 e 5.6 atualizadas"
 
 git push origin main

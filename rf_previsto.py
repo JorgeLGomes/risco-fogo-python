@@ -362,7 +362,10 @@ def main():
                              "operacionais (GFS, horizonte de até ~16 dias). "
                              "Com ela, monta a série diária completa "
                              "IMERG+previsão — necessário para horizontes "
-                             "longos (Eta/BESM até 13 meses).")
+                             "longos (Eta/BESM até 13 meses). O valor "
+                             "'padrao' (ou 'legado'/'nenhuma') força a "
+                             "composição original do GFS mesmo que o YAML "
+                             "defina uma fonte.")
     parser.add_argument("--config-fontes", default=None,
                         help="Arquivo JSON que ajusta/acrescenta fontes "
                              "(padrões de nome, variáveis, frequência dos "
@@ -425,6 +428,12 @@ def main():
         rf_fontes.carrega_fontes_json(args.config_fontes)
 
     fonte = None
+    # Valores especiais que forçam a composição legada do GFS (fonte
+    # nenhuma) mesmo que o YAML tenha definido uma fonte — útil para
+    # sobrepor "execucao: fonte: besm" sem editar o arquivo.
+    if args.fonte and str(args.fonte).lower() in (
+            "padrao", "padrão", "legado", "nenhuma", "none"):
+        args.fonte = None
     if args.fonte:
         nome_fonte = args.fonte.lower()
         if nome_fonte not in rf_fontes.FONTES:

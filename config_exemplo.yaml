@@ -74,11 +74,21 @@ fontes:
 # Padrões de execução (todos podem ser sobrepostos na linha de comando)
 # ----------------------------------------------------------------------------
 execucao:
-  fonte: besm            # gfs | eta | besm | (fonte definida acima)
-  de: 1m                 # início do intervalo de horizontes
-  ate: 13m               # fim do intervalo
-  passo: 1m              # passo (Nh, Nd, Nm)
+  # Fonte de previsão. SEM esta chave (e sem --fonte na CLI), a rodada usa a
+  # composição original dos produtos operacionais com o GFS (~16 dias) —
+  # este é o comportamento padrão. Defina a chave apenas para trocar de
+  # fonte (eta, besm, ...). ATENÇÃO: se o YAML definir uma fonte, ela vale
+  # sempre que a CLI não passar --fonte; para forçar o GFS sem editar o
+  # arquivo, use --fonte padrao (ou legado/nenhuma).
+  # fonte: besm          # gfs | eta | besm | (fonte definida acima)
+
+  # Horizontes pré-estabelecidos: lista OU intervalo de/ate/passo.
+  de: 6h                 # início do intervalo de horizontes
+  ate: 4d18h             # fim do intervalo
+  passo: 6h              # passo (Nh, Nd, Nm)
   # horizontes: 18h,7d18h,6m    # alternativa ao intervalo (lista)
+  # Exemplo BESM (13 meses): fonte: besm + de: 1m / ate: 13m / passo: 1m
+  #   e produto: RF_PREV_BESM
 
   # Data da rodada:
   #   data_final: "20260804"    # rodada fixa (YYYYMMDD)
@@ -89,7 +99,8 @@ execucao:
   data_final: hoje
 
   rb_max: 0.9
-  produto: RF_PREV_BESM  # subdiretório de saída em data/output/2.2/
+  # produto: RF_PREV_BESM   # subdiretório de saída em data/output/2.2/
+  #                         # (sem a chave: RF_PREV_CUSTOM, ou RF_PREV_<FONTE>)
   jobs: 4
   fallback_gfs: false
   sem_tif: false
