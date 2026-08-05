@@ -156,6 +156,8 @@ git commit -m "Muda o base padrao para o diretorio do ian01 e melhora os preparo
   e estimativa do restante) em vez de a cada 10 dias
 - prepara_imerg/gfs/era5: avisam qual base esta em uso e falham cedo
   (antes de baixar) se o destino nao for gravavel
+- rf_observado/prepara_era5: substitui datetime.utcnow() (obsoleto no
+  Python 3.12+) por _hoje_utc() com datetime.now(timezone.utc)
 - config_exemplo.yaml e manual atualizados"
 
 git push origin main

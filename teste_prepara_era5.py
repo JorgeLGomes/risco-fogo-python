@@ -134,7 +134,7 @@ def teste_periodo():
         dias = 7
     dias = prepara_era5.resolve_periodo(A)
     assert len(dias) == 7
-    assert dias[-1] < dt.datetime.utcnow()
+    assert dias[-1] < prepara_era5._hoje_utc()
     A.inicio, A.fim = "20260601", "20260603"
     assert len(prepara_era5.resolve_periodo(A)) == 3
     print("Resolução de período ok")

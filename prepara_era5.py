@@ -271,6 +271,13 @@ def baixa_mes(cliente, ano, mes, dias_do_mes, hora, dominio, destino):
 # Programa principal
 # ---------------------------------------------------------------------------
 
+def _hoje_utc():
+    """Data de hoje em UTC, à meia-noite (sem fuso, como o resto do
+    pipeline). Substitui datetime.utcnow(), obsoleto no Python 3.12+."""
+    return dt.datetime.now(dt.timezone.utc).replace(
+        tzinfo=None, hour=0, minute=0, second=0, microsecond=0)
+
+
 def resolve_periodo(args):
     """Devolve a lista de datas (datetime) pedidas."""
     if args.inicio or args.fim:
@@ -282,9 +289,7 @@ def resolve_periodo(args):
         if args.data_final:
             fim = dt.datetime.strptime(str(args.data_final), "%Y%m%d")
         else:
-            fim = (dt.datetime.utcnow().replace(hour=0, minute=0, second=0,
-                                                microsecond=0)
-                   - dt.timedelta(days=ATRASO_ERA5_DIAS))
+            fim = (_hoje_utc() - dt.timedelta(days=ATRASO_ERA5_DIAS))
         d1 = fim
         d0 = fim - dt.timedelta(days=args.dias - 1)
     if d0 > d1:

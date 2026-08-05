@@ -124,6 +124,13 @@ def processa_dia(parametros):
 # Resolução do período pedido
 # ---------------------------------------------------------------------------
 
+def _hoje_utc():
+    """Data de hoje em UTC, à meia-noite (sem fuso, como o resto do
+    pipeline). Substitui datetime.utcnow(), obsoleto no Python 3.12+."""
+    return dt.datetime.now(dt.timezone.utc).replace(
+        tzinfo=None, hour=0, minute=0, second=0, microsecond=0)
+
+
 def _soma_meses(data, n):
     m = data.month - 1 + n
     ano = data.year + m // 12
@@ -148,9 +155,7 @@ def resolve_periodo(args):
             "hoje", "auto", "sistema"):
         fim = dt.datetime.strptime(str(args.data_final), "%Y%m%d")
     else:
-        fim = (dt.datetime.utcnow().replace(hour=0, minute=0, second=0,
-                                            microsecond=0)
-               - dt.timedelta(days=ATRASO_ERA5_DIAS))
+        fim = (_hoje_utc() - dt.timedelta(days=ATRASO_ERA5_DIAS))
 
     if args.meses:
         inicio = _soma_meses(fim, -args.meses) + dt.timedelta(days=1)
