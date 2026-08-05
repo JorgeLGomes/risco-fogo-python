@@ -16,6 +16,7 @@ import datetime as dt
 import glob
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -289,6 +290,62 @@ precip30, la30, lo30, _ = rf_fontes.serie_precipitacao(
     f"{VALIDA_BESM:%Y%m%d%H}", log=lambda *a: None)
 assert precip30.shape == (120, lat_p.size, lon_p.size)
 print("Serie mista: grades de referencia corretas (fonte no 13m, IMERG no 30d) ok")
+
+# ---------------------------------------------------------------------------
+# Teste 6: rodada sazonal com passo diário e MÉDIA MENSAL (--media-mensal)
+# ---------------------------------------------------------------------------
+
+# Dados no layout "serie" da fonte besm real (um arquivo por variável com
+# todos os tempos diários), gravados no mesmo diretório do modelo.
+_n_serie = 60
+_tempos = [HOJE + dt.timedelta(days=i + 1) for i in range(_n_serie)]
+for _nome, _var, _dados in (
+        ("tmp_prec.nc", "prec",
+         rng.gamma(1.2, 3.0, (_n_serie, lat_m.size, lon_m.size))),
+        ("tmp_t2mt.nc", "t2mt",
+         rng.uniform(292, 308, (_n_serie, lat_m.size, lon_m.size))),
+        ("tmp_rsmt.nc", "rsmt",
+         rng.uniform(20, 90, (_n_serie, lat_m.size, lon_m.size)))):
+    grava(f"{BASE}/data/output/2.2/BESM/netcdf/{MODELO}/{_nome}",
+          {_var: (("time", "lat", "lon"), _dados.astype(np.float32))},
+          {"time": [np.datetime64(t.strftime("%Y-%m-%dT%H")) for t in _tempos],
+           "lat": lat_m, "lon": lon_m})
+
+cmd = [sys.executable, "rf_previsto.py", "--base", BASE, "--fonte", "besm",
+       "--data-final", MODELO[:8], "--de", "1d", "--ate", "45d",
+       "--passo", "1d", "--media-mensal", "--media",
+       "--sem-vegetacao", "--sem-topografia", "--sem-tif", "--jobs", "4"]
+r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+assert r.returncode == 0, (r.stdout + r.stderr)[-3000:]
+
+dir_saida = (f"{BASE}/data/output/2.2/RF_PREV_BESM_SEMVEG_SEMTOPO/netcdf/"
+             f"{MODELO}")
+arquivos = sorted(os.listdir(dir_saida))
+diarios = [a for a in arquivos if a.startswith("RF.PREV.2")]
+mensais = [a for a in arquivos
+           if re.fullmatch(r"RF\.PREV\.MEDIA\.\d{6}\.nc", a)]
+assert len(diarios) == 45, diarios
+assert len(mensais) >= 2, arquivos          # cobre 2 meses-calendário
+
+# a média mensal confere com o nanmean dos diários daquele mês
+mes = mensais[0].split(".")[3]              # AAAAMM
+do_mes = sorted(a for a in diarios if a.startswith(f"RF.PREV.{mes}"))
+pilha = []
+for nome in do_mes:
+    with xr.open_dataset(os.path.join(dir_saida, nome),
+                         decode_times=False) as ds:
+        v = ds[list(ds.data_vars)[0]].values[0]
+    pilha.append(np.where(v <= -998, np.nan, v))
+esperado = np.round(np.nanmean(np.stack(pilha).astype(np.float64), axis=0), 2)
+with xr.open_dataset(os.path.join(dir_saida, mensais[0]),
+                     decode_times=False) as ds:
+    v = ds[list(ds.data_vars)[0]].values[0]
+    obtido = np.where(v <= -998, np.nan, v)
+    assert ds.attrs.get("agregacao") == "media"
+    assert ds.attrs.get("dias_agregados") == str(len(do_mes))
+assert np.allclose(esperado, obtido, equal_nan=True, atol=1e-6)
+print(f"Teste 6 (BESM diario -> media mensal, {len(do_mes)} dias em {mes}) ok")
+
 
 print()
 print("TODOS OS TESTES MULTIFONTE PASSARAM")

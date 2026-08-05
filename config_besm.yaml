@@ -1,0 +1,63 @@
+# ============================================================================
+# Rodada sazonal do BESM T062 — RF médio de cada mês, de +1 a +13 meses
+# ============================================================================
+# Uso (uma linha):
+#     python3 rf_previsto.py --config config_besm.yaml
+#
+# O BESM traz previsão DIÁRIA por ~13 meses. Esta configuração calcula o RF
+# de cada dia previsto e agrega em médias mensais — 13 mapas
+# RF.PREV.MEDIA.AAAAMM.nc (mais a média da rodada inteira).
+#
+# Para apenas 13 instantâneos (um por mês, no mesmo dia de cada mês), troque
+# o bloco de horizontes por:  de: 1m / ate: 13m / passo: 1m  (bem mais rápido).
+#
+# Depois de calcular, as figuras saem com:
+#     python3 rf_figura.py <saida>/RF.PREV.MEDIA.2026*.nc \
+#         --painel --colunas 4 --titulo "BESM — Risco de Fogo médio mensal"
+# ============================================================================
+
+base: /p/projetos/grpeta/Team/jorge.gomes/risco-fogo-python
+
+fontes:
+  # Convenção real do pacote besm_queimada (CPTEC): um arquivo por variável
+  # com todos os tempos diários da rodada, em
+  # {base}/data/output/2.2/BESM/netcdf/{modelo}/
+  besm:
+    subdir: BESM/netcdf/{modelo}
+    layout: serie
+    padrao_prec: tmp_prec.nc
+    padrao_temp: tmp_t2mt.nc
+    padrao_ur: tmp_rsmt.nc
+    var_prec: prec
+    var_temp: t2mt
+    var_ur: rsmt
+    freq_prec: 1d
+    tipo_acumulo: intervalo
+    unidade_temp: K
+    unidade_ur: "%"
+    horizonte_max_dias: 396
+
+execucao:
+  fonte: besm
+  produto: RF_PREV_BESM
+
+  # Data da rodada do BESM: "hoje" ou a data fixa da rodada disponível
+  # (o diretório dos dados é .../BESM/netcdf/{data}00).
+  data_final: hoje
+
+  # Previsão diária cobrindo ~13 meses (396 dias).
+  de: 1d
+  ate: 396d
+  passo: 1d
+
+  # Agregações: um mapa médio por mês-calendário (+1 a +13) e a média geral.
+  media_mensal: true
+  media: true
+
+  rb_max: 0.9
+  jobs: 8
+  sem_tif: true          # o volume diário de GeoTIFF é grande; ligue se precisar
+
+  # Enquanto o mapa de vegetação e a topografia não estiverem disponíveis:
+  # sem_vegetacao: true
+  # sem_topografia: true

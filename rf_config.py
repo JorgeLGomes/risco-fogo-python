@@ -70,7 +70,7 @@ CAMINHOS_PADRAO = {
 EXECUCAO_CHAVES = ("fonte", "horizontes", "de", "ate", "passo", "data_final",
                    "rb_max", "produto", "jobs", "fallback_gfs", "sem_tif",
                    "fogograma", "sem_vegetacao", "sem_topografia",
-                   "classe_veg")
+                   "classe_veg", "media", "media_mensal", "maximo")
 
 SECOES_VALIDAS = {"base", "caminhos", "fontes", "execucao"}
 

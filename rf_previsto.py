@@ -405,6 +405,22 @@ def main():
     parser.add_argument("--classe-veg", type=int, default=4,
                         help="Classe usada com --sem-vegetacao (padrão 4: "
                              "A=2.4, PSE_max=75).")
+    parser.add_argument("--media-mensal", action="store_true",
+                        help="Gera o RF MÉDIO de cada mês-calendário "
+                             "coberto pelas previsões "
+                             "(RF.PREV.MEDIA.AAAAMM.nc). Combine com um "
+                             "passo diário (--passo 1d) para ter a média "
+                             "mensal de fato — típico das rodadas sazonais "
+                             "(Eta/BESM).")
+    parser.add_argument("--media", action="store_true",
+                        help="Gera o RF médio de TODAS as previsões da "
+                             "rodada (RF.PREV.MEDIA.{ini}-{fim}.nc).")
+    parser.add_argument("--maximo", action="store_true",
+                        help="Nas agregações, usa o MÁXIMO em vez da média "
+                             "(arquivos RF.PREV.MAXIMO.*).")
+    parser.add_argument("--so-agrega", action="store_true",
+                        help="Não calcula nada: apenas agrega os arquivos "
+                             "de previsão já existentes da rodada.")
     parser.add_argument("--config", default=None,
                         help="Arquivo de configuração YAML (ou JSON) dos "
                              "dados de entrada: base, caminhos (IMERG, "
@@ -578,6 +594,14 @@ def main():
         trabalhos.append(trabalho)
 
     # -----------------------------------------------------------------------
+    # Só agregar (não recalcula): usa os arquivos já existentes da rodada
+    # -----------------------------------------------------------------------
+    if args.so_agrega:
+        print("(--so-agrega: usando os arquivos de previsão já existentes)")
+        agrega_previsoes(args, previsoes, dir_output_netcdf)
+        return
+
+    # -----------------------------------------------------------------------
     # Executa os cálculos em paralelo
     # -----------------------------------------------------------------------
     with ProcessPoolExecutor(max_workers=args.jobs) as executor:
@@ -614,9 +638,60 @@ def main():
         rf_core.mergetime(gerados, arquivo_fogograma)
         print(f"Fogograma gerado: {arquivo_fogograma}")
 
+    # -----------------------------------------------------------------------
+    # Agregações opcionais (média mensal / média da rodada)
+    # -----------------------------------------------------------------------
+    agrega_previsoes(args, previsoes, dir_output_netcdf)
+
     decorrido = int(time.time() - tempo_inicial)
     print(" Tempo gasto: "
           + str(dt.timedelta(seconds=decorrido)).rjust(8, "0"))
+
+
+def agrega_previsoes(args, previsoes, dir_output_netcdf):
+    """Executa --media-mensal e --media sobre os arquivos de previsão
+    existentes da rodada. Os campos são agrupados pela DATA VÁLIDA de cada
+    previsão — com passo diário, o resultado é a média mensal do RF."""
+    if not (args.media or args.media_mensal):
+        return
+
+    def caminho(previsao_dt):
+        return os.path.join(dir_output_netcdf,
+                            f"RF.PREV.{previsao_dt:%Y%m%d%H}.nc")
+
+    disponiveis = [p for p in previsoes if os.path.exists(caminho(p))]
+    if not disponiveis:
+        print("Agregação: nenhum arquivo de previsão encontrado.",
+              file=sys.stderr)
+        return
+
+    operacao = "maximo" if args.maximo else "media"
+    rotulo = operacao.upper()
+
+    if args.media_mensal:
+        for (ano, mes), do_mes in rf_core.agrupa_por_mes(disponiveis):
+            saida = os.path.join(dir_output_netcdf,
+                                 f"RF.PREV.{rotulo}.{ano:04d}{mes:02d}.nc")
+            _, usados = rf_core.agrega_campos(
+                [caminho(p) for p in do_mes], saida, operacao,
+                titulo=(f"Risco de fogo previsto — {operacao} de "
+                        f"{ano:04d}-{mes:02d} ({len(do_mes)} previsões)"),
+                data_ref=do_mes[-1])
+            print(f"{rotulo} {ano:04d}-{mes:02d} ({usados} previsões): "
+                  f"{saida}")
+
+    if args.media:
+        saida = os.path.join(
+            dir_output_netcdf,
+            f"RF.PREV.{rotulo}.{disponiveis[0]:%Y%m%d}-"
+            f"{disponiveis[-1]:%Y%m%d}.nc")
+        _, usados = rf_core.agrega_campos(
+            [caminho(p) for p in disponiveis], saida, operacao,
+            titulo=(f"Risco de fogo previsto — {operacao} de "
+                    f"{disponiveis[0]:%Y%m%d} a {disponiveis[-1]:%Y%m%d} "
+                    f"({len(disponiveis)} previsões)"),
+            data_ref=disponiveis[-1])
+        print(f"{rotulo} da rodada ({usados} previsões): {saida}")
 
 
 if __name__ == "__main__":

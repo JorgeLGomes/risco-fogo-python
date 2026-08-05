@@ -5,6 +5,8 @@ rasterio
 pyyaml
 pygrib     # leitura GRIB2 do prepara_gfs.py
 cdsapi     # download da ERA5 (prepara_era5.py) — requer ~/.cdsapirc
+matplotlib        # figuras (rf_figura.py)
+global-land-mask  # mascara de oceano nas figuras sem mapa de vegetacao
 
 # apenas para o teste de validacao (teste_rf.py)
 scipy

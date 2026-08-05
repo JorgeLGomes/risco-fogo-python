@@ -91,12 +91,32 @@ execucao:
   # fonte: besm          # gfs | eta | besm | (fonte definida acima)
 
   # Horizontes pré-estabelecidos: lista OU intervalo de/ate/passo.
+  # O passo tem a MESMA unidade dos horizontes (Nh, Nd, Nm) e precisa ser
+  # compatível com o intervalo (não misture 'ate: 4d18h' com 'passo: 1m').
   de: 6h                 # início do intervalo de horizontes
   ate: 4d18h             # fim do intervalo
   passo: 6h              # passo (Nh, Nd, Nm)
   # horizontes: 18h,7d18h,6m    # alternativa ao intervalo (lista)
-  # Exemplo BESM (13 meses): fonte: besm + de: 1m / ate: 13m / passo: 1m
-  #   e produto: RF_PREV_BESM
+  #
+  # RODADA SAZONAL DO BESM (13 meses) — duas formas:
+  #
+  #   (a) UM MAPA POR MÊS, no mesmo dia de cada mês (13 rodadas, rápido):
+  #         fonte: besm
+  #         de: 1m
+  #         ate: 13m
+  #         passo: 1m
+  #         produto: RF_PREV_BESM
+  #
+  #   (b) RISCO MÉDIO DE CADA MÊS (recomendado — usa todos os dias):
+  #         fonte: besm
+  #         de: 1d
+  #         ate: 396d        # ~13 meses de previsão diária do BESM
+  #         passo: 1d
+  #         media_mensal: true   # gera RF.PREV.MEDIA.AAAAMM.nc (13 mapas)
+  #         media: true          # e a média de toda a rodada (opcional)
+  #         produto: RF_PREV_BESM
+  #       São ~396 cálculos diários; use jobs alto e, se quiser só as
+  #       médias, rode depois com --so-agrega (não recalcula nada).
 
   # Data da rodada:
   #   data_final: "20260804"    # rodada fixa (YYYYMMDD)
@@ -133,6 +153,16 @@ execucao:
   sem_vegetacao: false
   sem_topografia: false
   classe_veg: 4
+
+  # --------------------------------------------------------------------------
+  # Agregações (RF médio) — também disponíveis na CLI
+  # --------------------------------------------------------------------------
+  #   media_mensal: true   -> RF.PREV.MEDIA.AAAAMM.nc (um por mês-calendário)
+  #   media: true          -> RF.PREV.MEDIA.{ini}-{fim}.nc (rodada inteira)
+  #   maximo: true         -> usa o máximo em vez da média (RF.PREV.MAXIMO.*)
+  # media_mensal: false
+  # media: false
+  # maximo: false
   #
   # Exemplos de combinações (descomente UMA por rodada, ou use a CLI, que
   # sempre prevalece: --sem-vegetacao / --sem-topografia / --classe-veg):

@@ -477,6 +477,86 @@ def calcula_risco_fogo_dados(precip_invertida, lat_prec, lon_prec,
 
 
 # ---------------------------------------------------------------------------
+# Agregações de campos de RF (média/máximo de vários arquivos)
+# ---------------------------------------------------------------------------
+
+def le_campo_rf(caminho):
+    """Lê o campo de RF de um arquivo RF.OBS/RF.PREV: devolve
+    (rf 2D com NaN nos ausentes, lat, lon, nome da variável)."""
+    with xr.open_dataset(caminho, decode_times=False) as ds:
+        nome = next(iter(ds.data_vars))
+        v = ds[nome]
+        dados = np.asarray(v.values, dtype=np.float32)
+        if dados.ndim == 3:
+            dados = dados[0]
+        preenche = v.attrs.get("_FillValue", ds[nome].encoding.get(
+            "_FillValue", -999.0))
+        dados = np.where(dados <= (preenche + 1e-3), np.nan, dados)
+        lat = np.asarray(ds["lat"].values, dtype=np.float64)
+        lon = np.asarray(ds["lon"].values, dtype=np.float64)
+    return dados, lat, lon, nome
+
+
+def agrega_campos(caminhos_dias, arquivo_saida, operacao="media", titulo=None,
+                   data_ref=None, log=print):
+    """Agrega vários RF diários num único campo (``media`` ou ``maximo``),
+    ignorando valores ausentes, e grava no mesmo formato dos diários.
+
+    Devolve (arquivo_saida, número de dias usados)."""
+    soma = None
+    contagem = None
+    maximo = None
+    lat = lon = None
+    usados = 0
+
+    for caminho in caminhos_dias:
+        dados, la, lo, _ = le_campo_rf(caminho)
+        if lat is None:
+            lat, lon = la, lo
+            soma = np.zeros_like(dados, dtype=np.float64)
+            contagem = np.zeros(dados.shape, dtype=np.int32)
+            maximo = np.full(dados.shape, np.nan, dtype=np.float32)
+        elif dados.shape != soma.shape:
+            log(f"AVISO: {os.path.basename(caminho)} tem grade "
+                f"{dados.shape} (esperado {soma.shape}) — ignorado.")
+            continue
+        valido = ~np.isnan(dados)
+        soma[valido] += dados[valido]
+        contagem[valido] += 1
+        maximo = np.where(valido & (np.isnan(maximo) | (dados > maximo)),
+                          dados, maximo)
+        usados += 1
+
+    if usados == 0:
+        raise RuntimeError("Nenhum arquivo diário disponível para agregar.")
+
+    with np.errstate(invalid="ignore"):
+        # Arredondamento feito em float64 (o RF diário já tem 2 decimais,
+        # então a média cai com frequência exatamente em 0,xx5).
+        media = np.where(contagem > 0, soma / np.maximum(contagem, 1),
+                         np.nan)
+    campo = media if operacao == "media" else maximo.astype(np.float64)
+    campo = np.round(campo, 2).astype(np.float32)
+
+    if data_ref is None:
+        data_ref = dt.datetime.now()
+    grava_netcdf_rf(
+        campo, lat, lon, data_ref.strftime("%Y%m%d%H"), arquivo_saida,
+        titulo=titulo,
+        atributos_extras={"agregacao": operacao,
+                          "dias_agregados": str(usados)})
+    return arquivo_saida, usados
+
+
+def agrupa_por_mes(dias):
+    """Agrupa datetimes por (ano, mês), preservando a ordem."""
+    grupos = {}
+    for d in dias:
+        grupos.setdefault((d.year, d.month), []).append(d)
+    return sorted(grupos.items())
+
+
+# ---------------------------------------------------------------------------
 # Escrita do NetCDF de saída
 # ---------------------------------------------------------------------------
 

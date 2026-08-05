@@ -2,7 +2,7 @@
 
 ## Risco de Fogo Previsto em Python — INPE_FireRiskModel v2.2
 
-**Versão:** 1.9 · 5 de agosto de 2026
+**Versão:** 2.0 · 5 de agosto de 2026
 **Substitui:** `rf_previsto_1-5dias_2023.sh` e `rf_previsto_1-2_semanas_2024.sh` (bash + NCL)
 
 ---
@@ -14,7 +14,8 @@ Este pacote calcula o Risco de Fogo (RF) previsto em resolução de 1 km para a 
 - **`rf_previsto_1_5dias.py`** — gera 19 previsões, de +6 h até +4 dias 18 UTC, a cada 6 horas (produto `RF_PREV`).
 - **`rf_previsto_1_2_semanas.py`** — gera 2 previsões, para +7 e +14 dias às 18 UTC (produto `RF_PREV_SEMANAL`).
 - **`rf_previsto.py`** — script genérico: gera o RF para **qualquer horizonte de previsão** e **diferentes fontes de dados** (GFS, Eta, BESM) informados na linha de comando (seção 5).
-- **`rf_observado.py`** — RF **observado** dos últimos dias, semanas ou meses, com IMERG + ERA5 (seção 6.4).
+- **`rf_observado.py`** — RF **observado** dos últimos dias, semanas ou meses, com IMERG + ERA5, incluindo médias do período e mensais (seção 6.4).
+- **`rf_figura.py`** — figuras PNG dos campos de RF na paleta oficial da operação (seção 6.5).
 
 Ambos usam o módulo comum **`rf_core.py`** e produzem, para cada horário de previsão, um NetCDF (`RF.PREV.YYYYMMDDHH.nc`) e um GeoTIFF (`RF.PREV.YYYYMMDDHH.tif`), além dos produtos derivados (links D1–D5, cópias T0–T4/T7/T14, fogograma).
 
@@ -64,6 +65,8 @@ prepara_gfs.py
 prepara_imerg.py
 prepara_era5.py
 rf_observado.py
+rf_figura.py
+config_besm.yaml
 teste_rf.py
 teste_rf_previsto.py
 teste_rf_multifonte.py
@@ -272,7 +275,45 @@ Semântica: **topografia desligada** zera a correção (FTOP≡1) e dispensa o a
 
 Observação: como a saída `_SEMVEG` fica na grade da precipitação (≈10 km) e sem máscara d'água, ela não é diretamente comparável ponto a ponto com a referência de 1 km — use-a para avaliar padrões espaciais e magnitudes, ou compare após regradear a referência para a mesma grade.
 
-## 6. Preparo dos dados de entrada e RF observado (prepara_gfs, prepara_imerg, prepara_era5, rf_observado)
+### 5.7 Risco médio: agregações da rodada (--media-mensal / --media)
+
+Cada horizonte gera o seu `RF.PREV.{data}{hora}.nc`. Para obter o **risco médio** — típico das rodadas sazonais (Eta/BESM), em que interessa o mês e não o dia — o `rf_previsto.py` agrega os campos ao final:
+
+| Opção | Saída |
+|---|---|
+| `--media-mensal` | `RF.PREV.MEDIA.AAAAMM.nc` — uma média por mês-calendário coberto pelas previsões |
+| `--media` | `RF.PREV.MEDIA.{ini}-{fim}.nc` — média de toda a rodada |
+| `--maximo` | usa o **máximo** em vez da média (`RF.PREV.MAXIMO.*`) |
+| `--so-agrega` | não recalcula nada: agrega os arquivos já existentes da rodada |
+
+Os campos são agrupados pela **data válida** de cada previsão, e as médias ignoram valores ausentes ponto a ponto (o número de campos usados vai no atributo global `dias_agregados`). As mesmas chaves existem no YAML (`media_mensal`, `media`, `maximo`).
+
+**Rodada sazonal do BESM (1 a 13 meses).** O BESM traz previsão diária por ~13 meses (396 dias), então há duas formas de produzir "um valor por mês":
+
+```bash
+# (a) Instantâneo: 13 mapas, um no mesmo dia de cada mês — rápido (13 cálculos)
+python3 rf_previsto.py --fonte besm --de 1m --ate 13m --passo 1m \
+    --produto RF_PREV_BESM
+
+# (b) Risco MÉDIO de cada mês: usa todos os dias previstos (396 cálculos)
+python3 rf_previsto.py --fonte besm --de 1d --ate 396d --passo 1d \
+    --media-mensal --media --produto RF_PREV_BESM --jobs 8 --sem-tif
+
+# Se os diários já existirem, só as médias (não recalcula nada):
+python3 rf_previsto.py --fonte besm --de 1d --ate 396d --passo 1d \
+    --media-mensal --so-agrega --produto RF_PREV_BESM
+```
+
+A forma (b) é a recomendada quando o objetivo é a climatologia mensal prevista: o mapa de cada mês passa a representar todos os dias, e não um dia específico. O arquivo `config_besm.yaml` já traz essa configuração pronta — basta `python3 rf_previsto.py --config config_besm.yaml`. As figuras dos 13 mapas saem com o `rf_figura.py` (seção 6.5):
+
+```bash
+python3 rf_figura.py <saida>/RF.PREV.MEDIA.2026*.nc --painel --colunas 4 \
+    --titulo "BESM — Risco de Fogo médio mensal"
+```
+
+Atenção ao **passo**: ele tem a mesma unidade dos horizontes e precisa ser compatível com o intervalo — `--de 6h --ate 4d18h --passo 1m` não produz nada útil (o primeiro passo já ultrapassa o fim).
+
+## 6. Preparo dos dados, RF observado e figuras (prepara_gfs, prepara_imerg, prepara_era5, rf_observado, rf_figura)
 
 Três scripts geram o banco de dados de entrada do RF sem depender da área de produção do Programa Queimadas: o `prepara_gfs.py` (previsões), o `prepara_imerg.py` (precipitação observada) e o `prepara_era5.py` (temperatura/umidade da reanálise ERA5, seção 6.3). Com os dois primeiros, o fluxo completo de uma rodada prevista é:
 
@@ -376,6 +417,48 @@ python3 rf_observado.py --config config.yaml --dias 7 --sem-vegetacao --sem-topo
 
 O fluxo completo é: `prepara_imerg.py` (precipitação do período **+ 119 dias anteriores**) → `prepara_era5.py` (T/UR do período) → `rf_observado.py`. O `--simular` confere as entradas e aponta o que falta; dias com entradas incompletas são pulados com aviso (e o comando de preparo sugerido), sem interromper os demais. As saídas `RF.OBS.{data}{hora}.nc` (e `.tif`) vão para `data/output/2.2/RF_OBS/netcdf` (produto configurável via `--produto`, com os sufixos automáticos `_SEMVEG`/`_SEMTOPO` da análise de sensibilidade). Demais opções como no `rf_previsto.py`: `--hora`, `--rb-max`, `--jobs`, `--sem-tif`, `--classe-veg`, `--data-final` (aceita `hoje`; padrão 6 dias atrás, pelo atraso da ERA5).
 
+**Um arquivo por dia + agregações.** Cada dia do período gera o seu `RF.OBS.{data}{hora}.nc`. Para o risco **médio** — como nos mapas mensais do BESM — acrescente:
+
+| Opção | Saída |
+|---|---|
+| `--media` | `RF.OBS.MEDIA.{ini}-{fim}.nc` — média de todo o período |
+| `--media-mensal` | `RF.OBS.MEDIA.AAAAMM.nc` — uma média por mês-calendário do período |
+| `--maximo` | usa o **máximo** em vez da média (arquivos `RF.OBS.MAXIMO.*`) |
+| `--mergetime` | `RF.OBS.SERIE.{ini}-{fim}.nc` — todos os dias num só arquivo, com eixo de tempo |
+| `--so-agrega` | não recalcula nada: agrega os diários **já existentes** no período |
+
+As médias ignoram valores ausentes ponto a ponto (a contagem efetiva de dias usados fica no atributo global `dias_agregados`), e os arquivos saem no mesmo formato dos diários — podem ser abertos no QGIS/GeoServer ou passados ao `rf_figura.py`.
+
+```bash
+# Julho de 2026: 31 mapas diários + a média do mês
+python3 rf_observado.py --de 20260701 --ate 20260731 --media
+
+# Jan–jul/2026: média de cada mês + média do período todo
+python3 rf_observado.py --de 20260101 --ate 20260731 --media-mensal --media
+
+# Só as médias, a partir dos diários já calculados
+python3 rf_observado.py --de 20260701 --ate 20260731 --media --so-agrega
+```
+
+### 6.5 Figuras dos campos de RF (rf_figura.py)
+
+O `rf_figura.py` gera PNG de qualquer NetCDF do pipeline (`RF.OBS.*`, `RF.PREV.*`, médias mensais) usando a **paleta oficial da operação**, idêntica ao SLD do GeoServer (`INPE_FireRiskModel_2.2`): `-999` transparente e as paradas `#17b617` (Mínimo, 0,15), `#79f674` (Baixo, 0,40), `#ffff82` (Médio, 0,70), `#ff2e00` (Alto, 0,95) e `#a70000` (Crítico, 1,00), interpoladas como no `type="ramp"` do SLD.
+
+```bash
+# Um mapa (a figura vai para o lado do NetCDF, se --saida for omitido)
+python3 rf_figura.py data/output/2.2/RF_OBS/netcdf/RF.OBS.MEDIA.202607.nc
+
+# Painel com as médias mensais do ano
+python3 rf_figura.py data/output/2.2/RF_OBS/netcdf/RF.OBS.MEDIA.2026*.nc \
+    --painel --titulo "Risco de Fogo observado — média mensal" \
+    --saida rf_obs_mensal_2026.png
+
+# Todos os dias de julho, 7 colunas, faixas discretas
+python3 rf_figura.py '.../RF.OBS.202607*18.nc' --painel --colunas 7 --classes
+```
+
+Opções: `--painel` (vários campos numa figura) com `--colunas`, `--titulo`, `--saida` (arquivo ou pasta), `--dpi`, `--classes` (uma cor por faixa, em vez da rampa — útil para leitura por classe) e `--sem-mascara` (não aplica a máscara de oceano, necessária apenas em campos gerados com `--sem-vegetacao`, que não trazem a máscara d'água). Requer `matplotlib` (e `global-land-mask` para a máscara de oceano).
+
 ## 7. Saídas
 
 ### 7.1 Produto diário (1 a 5 dias)
@@ -437,7 +520,7 @@ python3 teste_rf_multifonte.py # valida o modo multifonte (Eta 13m, BESM 12h, JS
 python3 teste_prepara_gfs.py   # valida o preparo do GFS (idx, baldes, NetCDF)
 python3 teste_prepara_imerg.py # valida o preparo do IMERG (conversão, caminhos)
 python3 teste_prepara_era5.py  # valida o preparo da ERA5 (UR de T+Td, conversão)
-python3 teste_rf_observado.py  # valida o RF observado de ponta a ponta
+python3 teste_rf_observado.py  # valida o RF observado, as agregações e as figuras
 ```
 
 O primeiro teste cria dados sintéticos em `/tmp/teste_rf`, executa o cálculo completo e compara com uma implementação de referência fiel ao NCL; a saída esperada termina com `TODOS OS TESTES PASSARAM`. O segundo monta uma árvore com a estrutura de diretórios da produção em `/tmp/teste_generico` e executa o `rf_previsto.py` real em cinco cenários (lista, intervalo, fallback do GFS, horizonte absoluto e falha controlada).

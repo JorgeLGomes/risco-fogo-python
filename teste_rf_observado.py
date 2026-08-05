@@ -120,12 +120,91 @@ def teste_periodos():
     print("Períodos (--dias/--semanas/--meses/--de+--ate) ok")
 
 
+
+
+def teste_agregacoes():
+    """--media, --media-mensal e --mergetime sobre os diários existentes."""
+    dir_out = f"{BASE}/data/output/2.2/RF_OBS_SEMVEG_SEMTOPO/netcdf"
+    cmd = [sys.executable, "rf_observado.py", "--base", BASE,
+           "--de", (FIM - dt.timedelta(days=4)).strftime("%Y%m%d"),
+           "--ate", FIM.strftime("%Y%m%d"),
+           "--sem-vegetacao", "--sem-topografia", "--so-agrega",
+           "--media", "--media-mensal", "--mergetime"]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    out = r.stdout + r.stderr
+    assert r.returncode == 0, out
+
+    ini = (FIM - dt.timedelta(days=4)).strftime("%Y%m%d")
+    media = os.path.join(dir_out, f"RF.OBS.MEDIA.{ini}-{FIM:%Y%m%d}.nc")
+    mensal = os.path.join(dir_out, f"RF.OBS.MEDIA.{FIM:%Y%m}.nc")
+    serie = os.path.join(dir_out, f"RF.OBS.SERIE.{ini}-{FIM:%Y%m%d}.nc")
+    for arq in (media, mensal, serie):
+        assert os.path.exists(arq), arq
+
+    # a média confere com o nanmean dos diários existentes
+    diarios = sorted(f for f in os.listdir(dir_out)
+                     if f.startswith("RF.OBS.2") and f.endswith("18.nc"))
+    pilha = []
+    for nome in diarios:
+        with xr.open_dataset(os.path.join(dir_out, nome),
+                             decode_times=False) as ds:
+            v = ds[list(ds.data_vars)[0]].values[0]
+        pilha.append(np.where(v <= -998, np.nan, v))
+    # Acumulação em float64, como no rf_observado.agrega (o arredondamento
+    # para 2 casas é sensível ao tipo quando a média cai exatamente em
+    # 0,xx5 — o RF diário já vem com 2 decimais).
+    esperado = np.round(np.nanmean(np.stack(pilha).astype(np.float64),
+                                   axis=0), 2)
+    with xr.open_dataset(media, decode_times=False) as ds:
+        obtido = ds[list(ds.data_vars)[0]].values[0]
+        obtido = np.where(obtido <= -998, np.nan, obtido)
+        assert ds.attrs.get("agregacao") == "media"
+        assert ds.attrs.get("dias_agregados") == str(len(diarios))
+    assert np.allclose(esperado, obtido, equal_nan=True, atol=1e-6)
+
+    with xr.open_dataset(serie) as ds:
+        assert ds.sizes["time"] == len(diarios)
+    print(f"Agregacoes (--media/--media-mensal/--mergetime) ok "
+          f"({len(diarios)} dias)")
+
+
+def teste_figura():
+    """rf_figura.py gera PNG a partir dos NetCDF do RF."""
+    dir_out = f"{BASE}/data/output/2.2/RF_OBS_SEMVEG_SEMTOPO/netcdf"
+    ini = (FIM - dt.timedelta(days=4)).strftime("%Y%m%d")
+    media = os.path.join(dir_out, f"RF.OBS.MEDIA.{ini}-{FIM:%Y%m%d}.nc")
+    png = os.path.join(TMP, "figura.png")
+    r = subprocess.run([sys.executable, "rf_figura.py", media,
+                        "--saida", png], capture_output=True, text=True,
+                       timeout=600)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert os.path.exists(png) and os.path.getsize(png) > 10000
+
+    # painel com todos os diários + paleta discreta
+    painel = os.path.join(TMP, "painel.png")
+    r = subprocess.run([sys.executable, "rf_figura.py",
+                        os.path.join(dir_out, "RF.OBS.2*18.nc"),
+                        "--painel", "--classes", "--colunas", "2",
+                        "--saida", painel],
+                       capture_output=True, text=True, timeout=600)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert os.path.exists(painel)
+
+    import rf_figura
+    cmap, _ = rf_figura.escala()
+    assert rf_figura.CORES[0] == "#17b617" and rf_figura.CORES[-1] == "#a70000"
+    print("rf_figura (mapa, painel e paleta oficial do SLD) ok")
+
+
+
 if __name__ == "__main__":
     try:
         prepara_bancos()
         teste_periodos()
         teste_simular()
         teste_calculo()
+        teste_agregacoes()
+        teste_figura()
         print()
         print("TODOS OS TESTES DO RF_OBSERVADO PASSARAM")
     finally:

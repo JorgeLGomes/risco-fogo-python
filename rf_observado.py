@@ -131,6 +131,16 @@ def _hoje_utc():
         tzinfo=None, hour=0, minute=0, second=0, microsecond=0)
 
 
+# ---------------------------------------------------------------------------
+# Agregações do período (implementadas no rf_core, compartilhadas com o
+# rf_previsto.py)
+# ---------------------------------------------------------------------------
+
+_le_rf = rf_core.le_campo_rf
+agrega = rf_core.agrega_campos
+_por_mes = rf_core.agrupa_por_mes
+
+
 def _soma_meses(data, n):
     m = data.month - 1 + n
     ano = data.year + m // 12
@@ -164,6 +174,7 @@ def resolve_periodo(args):
     else:
         inicio = fim - dt.timedelta(days=(args.dias or 7) - 1)
     return inicio, fim
+
 
 
 # ---------------------------------------------------------------------------
@@ -213,6 +224,21 @@ def main():
     parser.add_argument("--config", default=None,
                         help="Arquivo YAML/JSON de configuração (base, "
                              "caminhos do IMERG/ERA5/vegetação etc.).")
+    parser.add_argument("--media", action="store_true",
+                        help="Gera também o RF MÉDIO de todo o período "
+                             "(RF.OBS.MEDIA.{ini}-{fim}.nc).")
+    parser.add_argument("--media-mensal", action="store_true",
+                        help="Gera o RF médio de cada mês-calendário do "
+                             "período (RF.OBS.MEDIA.AAAAMM.nc).")
+    parser.add_argument("--maximo", action="store_true",
+                        help="Nas agregações, usa o MÁXIMO em vez da média "
+                             "(arquivos RF.OBS.MAXIMO.*).")
+    parser.add_argument("--mergetime", action="store_true",
+                        help="Gera também um único NetCDF com todos os dias "
+                             "(RF.OBS.SERIE.{ini}-{fim}.nc).")
+    parser.add_argument("--so-agrega", action="store_true",
+                        help="Não calcula nada: apenas agrega os arquivos "
+                             "diários já existentes no período.")
     parser.add_argument("--simular", action="store_true",
                         help="Só lista os dias e confere os arquivos de "
                              "entrada (não calcula).")
@@ -312,6 +338,12 @@ def main():
               f"prontos, {len(incompletos)} incompletos)")
         return
 
+    if args.so_agrega:
+        print("(--so-agrega: usando os arquivos diários já existentes)")
+        agrega_periodo(args, dias_analise, dir_output_netcdf, hora,
+                       inicio, fim)
+        return
+
     if not trabalhos:
         sys.exit("Nenhum dia com entradas completas para calcular.")
 
@@ -337,8 +369,67 @@ def main():
 
     print(f"Concluído: {ok} dia(s) calculados, {erros} erro(s), "
           f"{len(incompletos)} pulado(s) por falta de entradas.")
+
+    agrega_periodo(args, dias_analise, dir_output_netcdf, hora, inicio, fim)
+
     if erros:
         sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Agregações pedidas na linha de comando
+# ---------------------------------------------------------------------------
+
+def agrega_periodo(args, dias_analise, dir_output_netcdf, hora, inicio, fim):
+    """Executa --media, --media-mensal e --mergetime sobre os arquivos
+    diários existentes no período."""
+    if not (args.media or args.media_mensal or args.mergetime):
+        return
+
+    def caminho_do_dia(dia):
+        return os.path.join(
+            dir_output_netcdf,
+            f"RF.OBS.{dia.replace(hour=hora):%Y%m%d%H}.nc")
+
+    disponiveis = [d for d in dias_analise
+                   if os.path.exists(caminho_do_dia(d))]
+    if not disponiveis:
+        print("Agregação: nenhum arquivo diário encontrado no período.",
+              file=sys.stderr)
+        return
+
+    operacao = "maximo" if args.maximo else "media"
+    rotulo = operacao.upper()
+
+    if args.media_mensal:
+        for (ano, mes), dias_mes in _por_mes(disponiveis):
+            saida = os.path.join(dir_output_netcdf,
+                                 f"RF.OBS.{rotulo}.{ano:04d}{mes:02d}.nc")
+            _, usados = agrega(
+                [caminho_do_dia(d) for d in dias_mes], saida, operacao,
+                titulo=(f"Risco de fogo observado — {operacao} de "
+                        f"{ano:04d}-{mes:02d} ({len(dias_mes)} dias)"),
+                data_ref=dias_mes[-1].replace(hour=hora))
+            print(f"{rotulo} {ano:04d}-{mes:02d} ({usados} dias): {saida}")
+
+    if args.media:
+        saida = os.path.join(
+            dir_output_netcdf,
+            f"RF.OBS.{rotulo}.{inicio:%Y%m%d}-{fim:%Y%m%d}.nc")
+        _, usados = agrega(
+            [caminho_do_dia(d) for d in disponiveis], saida, operacao,
+            titulo=(f"Risco de fogo observado — {operacao} de "
+                    f"{inicio:%Y%m%d} a {fim:%Y%m%d} ({len(disponiveis)} "
+                    f"dias)"),
+            data_ref=fim.replace(hour=hora))
+        print(f"{rotulo} do período ({usados} dias): {saida}")
+
+    if args.mergetime:
+        saida = os.path.join(
+            dir_output_netcdf,
+            f"RF.OBS.SERIE.{inicio:%Y%m%d}-{fim:%Y%m%d}.nc")
+        rf_core.mergetime([caminho_do_dia(d) for d in disponiveis], saida)
+        print(f"Série com {len(disponiveis)} dias: {saida}")
 
 
 if __name__ == "__main__":

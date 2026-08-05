@@ -143,7 +143,50 @@ git commit -m "Adiciona ERA5 (prepara_era5) e Risco de Fogo observado (rf_observ
 git push origin main
 ```
 
-Se o commit acima já foi feito, commite só as melhorias seguintes:
+Por último, o RF médio também no previsto (rodadas sazonais do BESM):
+
+```powershell
+git add -A
+git commit -m "Adiciona RF medio mensal tambem no rf_previsto (rodadas sazonais)
+
+- rf_core: agrega_campos/le_campo_rf/agrupa_por_mes (movidos do
+  rf_observado) — agregacao compartilhada pelos dois orquestradores
+- rf_previsto: --media-mensal, --media, --maximo e --so-agrega; os campos
+  sao agrupados pela data valida, entao com passo diario o resultado e a
+  media mensal de fato (BESM/Eta ate 13 meses)
+- rf_config: chaves media, media_mensal e maximo na secao execucao
+- config_besm.yaml: rodada sazonal pronta (previsao diaria de 396 dias ->
+  13 mapas RF.PREV.MEDIA.AAAAMM.nc)
+- config_exemplo.yaml: as duas formas de rodar o BESM (instantaneo mensal
+  x media mensal) e aviso sobre a unidade do passo
+- teste_rf_multifonte: cenario BESM diario -> media mensal conferida
+  contra o nanmean dos diarios
+- Manual: nova secao 5.7 (agregacoes da rodada e rodada sazonal do BESM)"
+
+git push origin main
+```
+
+Antes disso (ou junto, com `git add -A`), o RF médio no observado e as figuras:
+
+```powershell
+git add -A
+git commit -m "Adiciona RF medio do periodo/mensal e figuras na paleta oficial
+
+- rf_observado: --media, --media-mensal, --maximo, --mergetime e
+  --so-agrega (agrega os diarios ja existentes sem recalcular); as medias
+  ignoram ausentes ponto a ponto e registram dias_agregados nos atributos
+- rf_figura.py: figuras PNG de qualquer campo do pipeline com a paleta
+  oficial do SLD do GeoServer (INPE_FireRiskModel_2.2), em rampa ou em
+  faixas discretas (--classes), mapa unico ou painel (--painel/--colunas)
+- teste_rf_observado: cenarios de agregacao (media conferida contra o
+  nanmean dos diarios) e de geracao de figuras
+- requirements.txt: + matplotlib e global-land-mask
+- Manual v2.0: secao 6.4 (agregacoes) e nova secao 6.5 (figuras)"
+
+git push origin main
+```
+
+Se o commit da ERA5 já foi feito, commite só as melhorias seguintes:
 
 ```powershell
 git add -A

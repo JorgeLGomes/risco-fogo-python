@@ -295,7 +295,7 @@ man.push(
     "Manual do Usuário",
     "Risco de Fogo Previsto em Python — INPE_FireRiskModel v2.2",
     [
-      "Versão 1.9 · 5 de agosto de 2026",
+      "Versão 2.0 · 5 de agosto de 2026",
       "Substitui: rf_previsto_1-5dias_2023.sh e rf_previsto_1-2_semanas_2024.sh (bash + NCL)",
       "Programa Queimadas — http://www.inpe.br/queimadas/",
     ],
@@ -305,7 +305,7 @@ man.push(
       "3. Instalação",
       "4. Uso",
       "5. Script genérico para qualquer horizonte (rf_previsto.py)",
-      "6. Preparo dos dados de entrada e RF observado (prepara_gfs, prepara_imerg, prepara_era5, rf_observado)",
+      "6. Preparo dos dados, RF observado e figuras (prepara_gfs, prepara_imerg, prepara_era5, rf_observado, rf_figura)",
       "7. Saídas",
       "8. Logs e monitoramento",
       "9. Solução de problemas",
@@ -321,7 +321,8 @@ man.push(p("Este pacote calcula o Risco de Fogo (RF) previsto em resolução de 
 man.push(bullet([{ t: "rf_previsto_1_5dias.py", b: true }, { t: " — gera 19 previsões, de +6 h até +4 dias 18 UTC, a cada 6 horas (produto RF_PREV)." }]));
 man.push(bullet([{ t: "rf_previsto_1_2_semanas.py", b: true }, { t: " — gera 2 previsões, para +7 e +14 dias às 18 UTC (produto RF_PREV_SEMANAL)." }]));
 man.push(bullet([{ t: "rf_previsto.py", b: true }, { t: " — script genérico: gera o RF para qualquer horizonte de previsão e diferentes fontes de dados (GFS, Eta, BESM) informados na linha de comando (seção 5)." }]));
-man.push(bullet([{ t: "rf_observado.py", b: true }, { t: " — RF observado dos últimos dias, semanas ou meses, com IMERG + ERA5 (seção 6.4)." }]));
+man.push(bullet([{ t: "rf_observado.py", b: true }, { t: " — RF observado dos últimos dias, semanas ou meses, com IMERG + ERA5, incluindo médias do período e mensais (seção 6.4)." }]));
+man.push(bullet([{ t: "rf_figura.py", b: true }, { t: " — figuras PNG dos campos de RF na paleta oficial da operação (seção 6.5)." }]));
 man.push(p("Ambos usam o módulo comum rf_core.py e produzem, para cada horário de previsão, um NetCDF (RF.PREV.YYYYMMDDHH.nc) e um GeoTIFF (RF.PREV.YYYYMMDDHH.tif), além dos produtos derivados (links D1–D5, cópias T0–T4/T7/T14 e fogograma)."));
 
 man.push(h1("2. Requisitos"));
@@ -349,7 +350,7 @@ man.push(p("Todos os caminhos partem do diretório base. O padrão embutido (em 
 
 man.push(h1("3. Instalação"));
 man.push(p("Copie os arquivos para o diretório de scripts do modelo (os testes são opcionais):"));
-man.push(...codigo(["rf_core.py", "rf_fontes.py", "rf_config.py", "config_exemplo.yaml", "ativa_riscofogo.sh", "rf_previsto_1_5dias.py", "rf_previsto_1_2_semanas.py", "rf_previsto.py", "prepara_gfs.py", "prepara_imerg.py", "prepara_era5.py", "rf_observado.py", "teste_rf.py", "teste_rf_previsto.py", "teste_rf_multifonte.py", "teste_prepara_gfs.py", "teste_prepara_imerg.py", "teste_prepara_era5.py", "teste_rf_observado.py"]));
+man.push(...codigo(["rf_core.py", "rf_fontes.py", "rf_config.py", "config_exemplo.yaml", "ativa_riscofogo.sh", "rf_previsto_1_5dias.py", "rf_previsto_1_2_semanas.py", "rf_previsto.py", "prepara_gfs.py", "prepara_imerg.py", "prepara_era5.py", "rf_observado.py", "rf_figura.py", "config_besm.yaml", "teste_rf.py", "teste_rf_previsto.py", "teste_rf_multifonte.py", "teste_prepara_gfs.py", "teste_prepara_imerg.py", "teste_prepara_era5.py", "teste_rf_observado.py"]));
 man.push(p("Os scripts devem ficar no mesmo diretório (os orquestradores fazem import rf_core). Se desejar, torne-os executáveis:"));
 man.push(...codigo(["chmod +x rf_previsto_1_5dias.py rf_previsto_1_2_semanas.py"]));
 man.push(h2("3.1 Ambiente Python no cluster (ativa_riscofogo.sh)"));
@@ -433,6 +434,8 @@ man.push(
       ["--sem-vegetacao", "Sensibilidade: desliga o efeito da vegetação; o mapa não é lido (classe uniforme --classe-veg, saída na grade da precipitação, sem máscara d'água); sufixo _SEMVEG no produto", "desativado"],
       ["--sem-topografia", "Sensibilidade: desliga o Fator Topográfico (FTOP=1; arquivo de topografia dispensado); sufixo _SEMTOPO no produto", "desativado"],
       ["--classe-veg N", "Classe usada com --sem-vegetacao", "4 (A=2,4; PSE_max=75)"],
+      ["--media-mensal / --media / --maximo", "Agregações da rodada: média por mês-calendário, média de toda a rodada, ou máximo (seção 5.7)", "desativado"],
+      ["--so-agrega", "Só agrega os arquivos já existentes (não recalcula)", "desativado"],
       ["--data-final / --jobs N", "Como nos demais scripts; aceita também \"hoje\" (= data do sistema, útil no YAML)", "hoje / 4"],
     ],
     [24, 52, 24]
@@ -524,7 +527,37 @@ man.push(...codigo([
 ]));
 man.push(p("Semântica: topografia desligada zera a correção (FTOP≡1) e dispensa o arquivo de topografia; vegetação desligada dispensa o mapa de vegetação (o arquivo não é lido): todos os pontos recebem uma classe uniforme (--classe-veg, padrão 4) e a saída passa a usar a grade da precipitação — sem interpolação para 1 km e sem máscara d'água. Com as duas chaves ligadas, o RF roda sem nenhum arquivo estático (útil quando o mapa de vegetação e a topografia ainda não estão disponíveis); se a topografia permanecer ligada com a vegetação desligada, a elevação é regradeada automaticamente para a grade da precipitação. Os fatores de latitude e meteorológicos permanecem ativos. Proteções: o produto ganha sufixo automático (_SEMVEG/_SEMTOPO), nunca sobrescrevendo a referência, e o NetCDF registra os fatores desligados nos atributos globais (fator_vegetacao/fator_topografia). As chaves também existem no YAML (sem_vegetacao, sem_topografia, classe_veg)."));
 
-man.push(h1("6. Preparo dos dados de entrada e RF observado (prepara_gfs, prepara_imerg, prepara_era5, rf_observado)"));
+man.push(h2("5.7 Risco médio: agregações da rodada (--media-mensal / --media)"));
+man.push(p("Cada horizonte gera o seu RF.PREV.{data}{hora}.nc. Para obter o risco médio — típico das rodadas sazonais (Eta/BESM), em que interessa o mês e não o dia — o rf_previsto.py agrega os campos ao final:"));
+man.push(tabela(["Opção", "Saída"], [
+  ["--media-mensal", "RF.PREV.MEDIA.AAAAMM.nc — uma média por mês-calendário coberto pelas previsões"],
+  ["--media", "RF.PREV.MEDIA.{ini}-{fim}.nc — média de toda a rodada"],
+  ["--maximo", "usa o máximo em vez da média (RF.PREV.MAXIMO.*)"],
+  ["--so-agrega", "não recalcula nada: agrega os arquivos já existentes da rodada"],
+], [28, 72]));
+man.push(p("Os campos são agrupados pela data válida de cada previsão, e as médias ignoram valores ausentes ponto a ponto (o número de campos usados vai no atributo global dias_agregados). As mesmas chaves existem no YAML (media_mensal, media, maximo)."));
+man.push(p([{ t: "Rodada sazonal do BESM (1 a 13 meses). ", b: true }, { t: "O BESM traz previsão diária por ~13 meses (396 dias), então há duas formas de produzir \"um valor por mês\":" }]));
+man.push(...codigo([
+  "# (a) Instantaneo: 13 mapas, um no mesmo dia de cada mes - rapido (13 calculos)",
+  "python3 rf_previsto.py --fonte besm --de 1m --ate 13m --passo 1m \\",
+  "    --produto RF_PREV_BESM",
+  "",
+  "# (b) Risco MEDIO de cada mes: usa todos os dias previstos (396 calculos)",
+  "python3 rf_previsto.py --fonte besm --de 1d --ate 396d --passo 1d \\",
+  "    --media-mensal --media --produto RF_PREV_BESM --jobs 8 --sem-tif",
+  "",
+  "# Se os diarios ja existirem, so as medias (nao recalcula nada):",
+  "python3 rf_previsto.py --fonte besm --de 1d --ate 396d --passo 1d \\",
+  "    --media-mensal --so-agrega --produto RF_PREV_BESM",
+]));
+man.push(p("A forma (b) é a recomendada quando o objetivo é a climatologia mensal prevista: o mapa de cada mês passa a representar todos os dias, e não um dia específico. O arquivo config_besm.yaml já traz essa configuração pronta — basta python3 rf_previsto.py --config config_besm.yaml. As figuras dos 13 mapas saem com o rf_figura.py (seção 6.5)."));
+man.push(...codigo([
+  "python3 rf_figura.py <saida>/RF.PREV.MEDIA.2026*.nc --painel --colunas 4 \\",
+  "    --titulo \"BESM - Risco de Fogo medio mensal\"",
+]));
+man.push(p("Atenção ao passo: ele tem a mesma unidade dos horizontes e precisa ser compatível com o intervalo — --de 6h --ate 4d18h --passo 1m não produz nada útil (o primeiro passo já ultrapassa o fim)."));
+
+man.push(h1("6. Preparo dos dados, RF observado e figuras (prepara_gfs, prepara_imerg, prepara_era5, rf_observado, rf_figura)"));
 man.push(p("Dois scripts geram o banco de dados de entrada do RF sem depender da área de produção do Programa Queimadas: o prepara_gfs.py (previsões) e o prepara_imerg.py (precipitação observada). Fluxo completo de uma rodada:"));
 man.push(...codigo([
   "python3 prepara_imerg.py --config config.yaml         # 1. IMERG observado (119 dias)",
@@ -598,6 +631,40 @@ man.push(...codigo([
   "python3 rf_observado.py --config config.yaml --dias 7 --sem-vegetacao --sem-topografia",
 ]));
 man.push(p("O fluxo completo é: prepara_imerg.py (precipitação do período + 119 dias anteriores) → prepara_era5.py (T/UR do período) → rf_observado.py. O --simular confere as entradas e aponta o que falta; dias com entradas incompletas são pulados com aviso (e o comando de preparo sugerido), sem interromper os demais. As saídas RF.OBS.{data}{hora}.nc (e .tif) vão para data/output/2.2/RF_OBS/netcdf (produto configurável via --produto, com os sufixos automáticos _SEMVEG/_SEMTOPO da análise de sensibilidade). Demais opções como no rf_previsto.py: --hora, --rb-max, --jobs, --sem-tif, --classe-veg, --data-final (aceita 'hoje'; padrão 6 dias atrás, pelo atraso da ERA5)."));
+man.push(p([{ t: "Um arquivo por dia + agregações. ", b: true }, { t: "Cada dia do período gera o seu RF.OBS.{data}{hora}.nc. Para o risco médio — como nos mapas mensais do BESM — acrescente:" }]));
+man.push(tabela(["Opção", "Saída"], [
+  ["--media", "RF.OBS.MEDIA.{ini}-{fim}.nc — média de todo o período"],
+  ["--media-mensal", "RF.OBS.MEDIA.AAAAMM.nc — uma média por mês-calendário do período"],
+  ["--maximo", "usa o máximo em vez da média (arquivos RF.OBS.MAXIMO.*)"],
+  ["--mergetime", "RF.OBS.SERIE.{ini}-{fim}.nc — todos os dias num só arquivo, com eixo de tempo"],
+  ["--so-agrega", "não recalcula nada: agrega os diários já existentes no período"],
+], [28, 72]));
+man.push(p("As médias ignoram valores ausentes ponto a ponto (a contagem efetiva de dias usados fica no atributo global dias_agregados), e os arquivos saem no mesmo formato dos diários — podem ser abertos no QGIS/GeoServer ou passados ao rf_figura.py."));
+man.push(...codigo([
+  "# Julho de 2026: 31 mapas diarios + a media do mes",
+  "python3 rf_observado.py --de 20260701 --ate 20260731 --media",
+  "",
+  "# Jan-jul/2026: media de cada mes + media do periodo todo",
+  "python3 rf_observado.py --de 20260101 --ate 20260731 --media-mensal --media",
+  "",
+  "# So as medias, a partir dos diarios ja calculados",
+  "python3 rf_observado.py --de 20260701 --ate 20260731 --media --so-agrega",
+]));
+man.push(h2("6.5 Figuras dos campos de RF (rf_figura.py)"));
+man.push(p("O rf_figura.py gera PNG de qualquer NetCDF do pipeline (RF.OBS.*, RF.PREV.*, médias mensais) usando a paleta oficial da operação, idêntica ao SLD do GeoServer (INPE_FireRiskModel_2.2): -999 transparente e as paradas #17b617 (Mínimo, 0,15), #79f674 (Baixo, 0,40), #ffff82 (Médio, 0,70), #ff2e00 (Alto, 0,95) e #a70000 (Crítico, 1,00), interpoladas como no type=\"ramp\" do SLD."));
+man.push(...codigo([
+  "# Um mapa (a figura vai para o lado do NetCDF, se --saida for omitido)",
+  "python3 rf_figura.py data/output/2.2/RF_OBS/netcdf/RF.OBS.MEDIA.202607.nc",
+  "",
+  "# Painel com as medias mensais do ano",
+  "python3 rf_figura.py data/output/2.2/RF_OBS/netcdf/RF.OBS.MEDIA.2026*.nc \\",
+  "    --painel --titulo \"Risco de Fogo observado - media mensal\" \\",
+  "    --saida rf_obs_mensal_2026.png",
+  "",
+  "# Todos os dias de julho, 7 colunas, faixas discretas",
+  "python3 rf_figura.py '.../RF.OBS.202607*18.nc' --painel --colunas 7 --classes",
+]));
+man.push(p("Opções: --painel (vários campos numa figura) com --colunas, --titulo, --saida (arquivo ou pasta), --dpi, --classes (uma cor por faixa, em vez da rampa — útil para leitura por classe) e --sem-mascara (não aplica a máscara de oceano, necessária apenas em campos gerados com --sem-vegetacao, que não trazem a máscara d'água). Requer matplotlib (e global-land-mask para a máscara de oceano)."));
 
 man.push(h1("7. Saídas"));
 man.push(h2("7.1 Produto diário (1 a 5 dias)"));
@@ -669,7 +736,7 @@ man.push(p(""));
 
 man.push(h1("10. Testes de validação"));
 man.push(p("Após instalar ou alterar qualquer coisa, rode:"));
-man.push(...codigo(["python3 teste_rf.py            # valida o núcleo do cálculo (rf_core)", "python3 teste_rf_previsto.py   # valida o script genérico de ponta a ponta", "python3 teste_rf_multifonte.py # valida o modo multifonte (Eta 13m, BESM 12h, JSON)", "python3 teste_prepara_gfs.py   # valida o preparo do GFS (idx, baldes, NetCDF)", "python3 teste_prepara_imerg.py # valida o preparo do IMERG (conversão, caminhos)", "python3 teste_prepara_era5.py  # valida o preparo da ERA5 (UR de T+Td, conversão)", "python3 teste_rf_observado.py  # valida o RF observado de ponta a ponta"]));
+man.push(...codigo(["python3 teste_rf.py            # valida o núcleo do cálculo (rf_core)", "python3 teste_rf_previsto.py   # valida o script genérico de ponta a ponta", "python3 teste_rf_multifonte.py # valida o modo multifonte (Eta 13m, BESM 12h, JSON)", "python3 teste_prepara_gfs.py   # valida o preparo do GFS (idx, baldes, NetCDF)", "python3 teste_prepara_imerg.py # valida o preparo do IMERG (conversão, caminhos)", "python3 teste_prepara_era5.py  # valida o preparo da ERA5 (UR de T+Td, conversão)", "python3 teste_rf_observado.py  # valida o RF observado, as agregacoes e as figuras"]));
 man.push(p("O primeiro teste cria dados sintéticos em /tmp/teste_rf, executa o cálculo completo e compara com uma implementação de referência fiel ao NCL; a saída esperada termina com \"TODOS OS TESTES PASSARAM\". O segundo monta uma árvore com a estrutura de diretórios da produção em /tmp/teste_generico e executa o rf_previsto.py real em cinco cenários (lista, intervalo, fallback do GFS, horizonte absoluto e falha controlada)."));
 
 man.push(h1("11. Segurança"));
