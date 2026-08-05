@@ -46,6 +46,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import numpy as np
 
+import era5_tempo
 import rf_config
 import rf_core
 
@@ -81,11 +82,28 @@ def processa_dia(parametros):
             precip, lat_prec, lon_prec = rf_core.ler_precipitacao(
                 lista_imerg, parametros["nome_var_precip"])
 
-            # Temperatura e umidade: ERA5 na hora da análise.
+            # Temperatura e umidade: ERA5 na hora da análise (uma hora
+            # fixa, ou composta por faixas de longitude no modo solar).
+            arquivos = parametros["arquivos_era5"]
             log("")
-            log(f"Abrindo o ERA5: {parametros['arquivo_era5']}")
-            t2m, ur2m, lat_met, lon_met = rf_core.ler_temp_ur(
-                parametros["arquivo_era5"])
+            log(f"Abrindo o ERA5 ({parametros['descricao_hora']}): "
+                f"{len(arquivos)} arquivo(s)")
+            if len(arquivos) == 1:
+                (_, caminho), = arquivos.items()
+                t2m, ur2m, lat_met, lon_met = rf_core.ler_temp_ur(caminho)
+            else:
+                campos_t, campos_ur = {}, {}
+                lat_met = lon_met = None
+                for hora_utc, caminho in sorted(arquivos.items()):
+                    log(f"  {hora_utc:02d} UTC: {os.path.basename(caminho)}")
+                    tt, uu, lat_met, lon_met = rf_core.ler_temp_ur(caminho)
+                    campos_t[hora_utc] = tt
+                    campos_ur[hora_utc] = uu
+                hora_local = parametros["hora_local"]
+                t2m = era5_tempo.compoe_por_longitude(
+                    campos_t, lon_met, hora_local)
+                ur2m = era5_tempo.compoe_por_longitude(
+                    campos_ur, lon_met, hora_local)
 
             arquivo_saida = parametros["arquivo_saida"]
             rf_core.calcula_risco_fogo_dados(
@@ -104,6 +122,7 @@ def processa_dia(parametros):
                 usar_vegetacao=parametros["usar_vegetacao"],
                 usar_topografia=parametros["usar_topografia"],
                 classe_veg_uniforme=parametros["classe_veg_uniforme"],
+                correcao_ur=parametros.get("correcao_ur", "ncl"),
             )
 
             if not parametros["sem_tif"]:
@@ -200,8 +219,9 @@ def main():
                         help="Fim da janela de --dias/--semanas/--meses "
                              f"(padrão: {ATRASO_ERA5_DIAS} dias atrás — "
                              "atraso da ERA5; aceita 'hoje').")
-    parser.add_argument("--hora", default="18",
-                        help="Hora UTC da análise (padrão: 18).")
+    parser.add_argument("--hora", default=None,
+                        help="Hora UTC da análise no modo fixo (padrão: "
+                             "seção 'era5' do config, ou 18).")
     parser.add_argument("--rb-max", type=float, default=0.9,
                         help="Risco básico máximo (padrão: 0.9).")
     parser.add_argument("--produto", default=PRODUTO_PADRAO,
@@ -221,6 +241,21 @@ def main():
                              "dispensado). Sufixo _SEMTOPO.")
     parser.add_argument("--classe-veg", type=int, default=4,
                         help="Classe usada com --sem-vegetacao (padrão 4).")
+    parser.add_argument("--correcao-ur", default=None,
+                        choices=sorted(rf_core.FATOR_UR),
+                        help="Escala da UR no Fator de Umidade: 'ncl' "
+                             "(padrão, idêntico à operação: UR em fração, "
+                             "FU quase constante), 'decimos' ou "
+                             "'percentual' (UR em %%, como a equação "
+                             "parece supor). Não-'ncl' acrescenta sufixo "
+                             "ao produto.")
+    parser.add_argument("--horario", default=None, choices=era5_tempo.MODOS,
+                        help="Horário do ERA5: 'fixo' (uma hora UTC) ou "
+                             "'solar' (hora solar local por faixas de "
+                             "longitude). Padrão: seção 'era5' do config.")
+    parser.add_argument("--hora-local", type=int, default=None,
+                        help="Hora solar local no modo solar (padrão: "
+                             "seção 'era5' do config).")
     parser.add_argument("--config", default=None,
                         help="Arquivo YAML/JSON de configuração (base, "
                              "caminhos do IMERG/ERA5/vegetação etc.).")
@@ -248,7 +283,22 @@ def main():
            else rf_config.padrao())
     base = (args.base or cfg["base"]).rstrip("/")
     caminhos = cfg["caminhos"]
-    hora = int(args.hora)
+    # Horário do ERA5: CLI > seção 'era5' do config > padrão.
+    cfg_era5 = dict(era5_tempo.normaliza(cfg.get("era5")))
+    if args.horario:
+        cfg_era5["horario"] = args.horario
+    if args.hora_local is not None:
+        cfg_era5["hora_local"] = int(args.hora_local)
+    if args.hora is not None:
+        cfg_era5["hora"] = int(args.hora)
+        if not args.horario:
+            cfg_era5["horario"] = "fixo"
+    cfg_era5 = era5_tempo.normaliza(cfg_era5)
+    modo_solar = cfg_era5["horario"] == "solar"
+    hora = era5_tempo.rotulo_hora(cfg_era5)      # rótulo dos arquivos
+
+    correcao_ur = (args.correcao_ur
+                   or cfg["execucao"].get("correcao_ur") or "ncl")
 
     inicio, fim = resolve_periodo(args)
     dias_analise = [inicio + dt.timedelta(days=i)
@@ -259,6 +309,10 @@ def main():
         produto += "_SEMVEG"
     if args.sem_topografia:
         produto += "_SEMTOPO"
+    if correcao_ur != "ncl":
+        produto += "_UR" + correcao_ur.upper()[:3]
+    if modo_solar:
+        produto += "_SOLAR"
 
     dir_output_netcdf = f"{base}/data/output/2.2/{produto}/netcdf"
     dir_output_tif = f"{base}/data/output/2.2/{produto}/tif"
@@ -269,8 +323,27 @@ def main():
         base, caminhos["mapa_vegetacao"].format(ano_veg=ano_mapa_veg))
     arq_topografia = rf_config.resolve(base, caminhos["topografia"])
 
-    print(f"RF OBSERVADO: {inicio:%Y%m%d} a {fim:%Y%m%d} às {hora:02d} UTC "
+    # Horas UTC necessárias: no modo solar dependem das longitudes do
+    # banco (lidas do primeiro arquivo IMERG disponível).
+    horas_do_dia = era5_tempo.horas_para_grade(cfg_era5, [-45.0])
+    if modo_solar:
+        for dia in dias_analise:
+            caminho = rf_config.caminho_imerg(base, caminhos, dia)
+            if os.path.exists(caminho):
+                import xarray as xr
+                with xr.open_dataset(caminho, decode_times=False) as ds:
+                    lon_banco = np.asarray(ds["lon"].values, dtype=np.float64)
+                horas_do_dia = era5_tempo.horas_para_grade(cfg_era5, lon_banco)
+                break
+
+    print(f"RF OBSERVADO: {inicio:%Y%m%d} a {fim:%Y%m%d} "
           f"({len(dias_analise)} dia(s))")
+    print(f"horario: >>{era5_tempo.descricao(cfg_era5)}"
+          + (f" — horas UTC {', '.join(f'{h:02d}' for h in horas_do_dia)}"
+             if modo_solar else ""))
+    if correcao_ur != "ncl":
+        print(f"UR no FU: >{correcao_ur} "
+              f"(x{rf_core.FATOR_UR[correcao_ur]:.0f}) — difere da operação")
     print(f"produto: >>{produto}")
     print(f"saida: >>>>{dir_output_netcdf}")
 
@@ -293,9 +366,15 @@ def main():
             else:
                 faltas.append(caminho)
 
-        arquivo_era5 = rf_config.caminho_era5(base, caminhos, quando, hora)
-        if not os.path.exists(arquivo_era5):
-            faltas.append(arquivo_era5)
+        horas_utc = horas_do_dia
+        arquivos_era5 = {}
+        for hora_utc in horas_utc:
+            caminho = rf_config.caminho_era5(
+                base, caminhos, dia.replace(hour=hora_utc), hora_utc)
+            if os.path.exists(caminho):
+                arquivos_era5[hora_utc] = caminho
+            else:
+                faltas.append(caminho)
 
         if faltas:
             incompletos.append((data_analise, faltas))
@@ -305,7 +384,10 @@ def main():
             "data_analise": data_analise,
             "lista_imerg": lista_imerg,
             "nome_var_precip": "prec",
-            "arquivo_era5": arquivo_era5,
+            "arquivos_era5": arquivos_era5,
+            "hora_local": cfg_era5["hora_local"],
+            "descricao_hora": era5_tempo.descricao(cfg_era5),
+            "correcao_ur": correcao_ur,
             "arquivo_mapa_veg": arquivo_mapa_veg,
             "arquivo_topografia": arq_topografia,
             "arquivo_saida": os.path.join(
@@ -333,7 +415,8 @@ def main():
     if args.simular:
         for t in trabalhos:
             print(f"  {t['data_analise']}: {len(t['lista_imerg'])} IMERG + "
-                  f"{os.path.basename(t['arquivo_era5'])}")
+                  f"{len(t['arquivos_era5'])} ERA5 "
+                  f"({t['descricao_hora']})")
         print(f"(--simular: nada foi calculado; {len(trabalhos)} dia(s) "
               f"prontos, {len(incompletos)} incompletos)")
         return

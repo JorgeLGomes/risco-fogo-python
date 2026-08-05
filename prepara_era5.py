@@ -46,6 +46,22 @@ Uso
     # Só mostrar o plano (sem baixar)
     python3 prepara_era5.py --inicio 20260601 --fim 20260731 --simular
 
+    # Horas explícitas (sobrepõe a seção 'era5' do config)
+    python3 prepara_era5.py --dias 7 --hora 17,18,19,20
+
+Quais horas são baixadas
+------------------------
+A seção ``era5`` do config.yaml decide:
+
+    era5:
+      horario: fixo      # baixa apenas 'hora' (padrão 18 UTC)
+      hora: 18
+
+    era5:
+      horario: solar     # baixa as horas UTC que correspondem à hora
+      hora_local: 15     # solar local pedida em cada faixa de longitude
+                         # do domínio (ex.: 17..20 UTC sobre o Brasil)
+
 As requisições ao CDS são agrupadas por mês (mais eficiente na fila do
 Copernicus). Dias cujos dois arquivos de saída já existem são pulados
 (use --sobrescrever para refazer).
@@ -60,6 +76,7 @@ import zipfile
 
 import numpy as np
 
+import era5_tempo
 import rf_config
 
 # ---------------------------------------------------------------------------
@@ -312,9 +329,12 @@ def main():
     parser.add_argument("--dias", type=int, default=7,
                         help="Tamanho da janela quando não há "
                              "--inicio/--fim (padrão: 7).")
-    parser.add_argument("--hora", default="18",
-                        help="Hora UTC da análise diária (padrão: 18, "
-                             "compatível com os produtos do RF).")
+    parser.add_argument("--hora", default=None,
+                        help="Hora(s) UTC a baixar, separadas por vírgula. "
+                             "Sem esta opção, as horas vêm da seção 'era5' "
+                             "do --config: modo 'fixo' baixa uma hora; modo "
+                             "'solar' baixa as horas que cobrem as faixas "
+                             "de longitude do domínio (hora solar local).")
     parser.add_argument("--dominio", default=DOMINIO_PADRAO,
                         help=f"latS,latN,lonW,lonE (padrão: "
                              f"{DOMINIO_PADRAO}).")
@@ -335,23 +355,41 @@ def main():
     caminhos = cfg["caminhos"]
 
     dias = resolve_periodo(args)
-    hora = int(args.hora)
     dominio = tuple(float(x) for x in args.dominio.split(","))
 
-    # Pula dias completos (os dois arquivos já existem).
-    pendentes = []
-    for d in dias:
-        quando = d.replace(hour=hora)
-        arq1 = rf_config.caminho_era5(base, caminhos, quando, hora)
-        arq2 = rf_config.caminho_era5(base, caminhos, quando, hora,
-                                      vento=True)
-        if args.sobrescrever or not (os.path.exists(arq1)
-                                     and os.path.exists(arq2)):
-            pendentes.append(d)
+    # Horas UTC a baixar: --hora (CLI) > seção 'era5' do config > padrão.
+    if args.hora:
+        horas = sorted({int(h) for h in str(args.hora).split(",")})
+        origem_horas = "linha de comando"
+    else:
+        horas = era5_tempo.horas_para_baixar(cfg.get("era5"),
+                                             dominio[2], dominio[3])
+        origem_horas = era5_tempo.descricao(cfg.get("era5"))
 
-    print(f"ERA5: {dias[0]:%Y%m%d} a {dias[-1]:%Y%m%d} às {hora:02d} UTC "
-          f"({len(dias)} dia(s); {len(dias) - len(pendentes)} já "
-          f"existem, {len(pendentes)} a baixar)")
+    # Pula (dia, hora) já completos — os dois arquivos existem.
+    pendentes_por_hora = {}
+    for hora in horas:
+        faltam = []
+        for d in dias:
+            quando = d.replace(hour=hora)
+            arq1 = rf_config.caminho_era5(base, caminhos, quando, hora)
+            arq2 = rf_config.caminho_era5(base, caminhos, quando, hora,
+                                          vento=True)
+            if args.sobrescrever or not (os.path.exists(arq1)
+                                         and os.path.exists(arq2)):
+                faltam.append(d)
+        if faltam:
+            pendentes_por_hora[hora] = faltam
+    pendentes = sorted({d for lista in pendentes_por_hora.values()
+                        for d in lista})
+
+    print(f"ERA5: {dias[0]:%Y%m%d} a {dias[-1]:%Y%m%d} ({len(dias)} dia(s))")
+    print(f"Horas UTC: {', '.join(f'{h:02d}' for h in horas)}  "
+          f"[{origem_horas}]")
+    total_par = len(dias) * len(horas)
+    total_pend = sum(len(v) for v in pendentes_por_hora.values())
+    print(f"Arquivos (dia x hora): {total_par}; "
+          f"{total_par - total_pend} já existem, {total_pend} a baixar")
     print(f"Domínio: lat [{dominio[0]}, {dominio[1]}], "
           f"lon [{dominio[2]}, {dominio[3]}]")
     print(f"Destino: {rf_config.resolve(base, caminhos['era5_dir'])}")
@@ -370,14 +408,14 @@ def main():
                      f"({exc}).\nConfira o caminho acima — provavelmente "
                      f"falta --config config.yaml (ou --base).")
 
-    if not pendentes:
+    if not pendentes_por_hora:
         print("Nada a fazer.")
         return
-    grupos = agrupa_por_mes(pendentes)
     if args.simular:
-        for ano, mes, ds in grupos:
-            print(f"  requisição CDS: {ano:04d}-{mes:02d}, "
-                  f"{len(ds)} dia(s): {ds}")
+        for hora, lista in sorted(pendentes_por_hora.items()):
+            for ano, mes, ds in agrupa_por_mes(lista):
+                print(f"  requisição CDS: {ano:04d}-{mes:02d} às "
+                      f"{hora:02d} UTC, {len(ds)} dia(s): {ds}")
         print("(--simular: nada foi baixado)")
         return
 
@@ -396,23 +434,27 @@ def main():
                  f"cabeçalho deste script.")
 
     total = 0
-    for ano, mes, dias_do_mes in grupos:
-        print(f"Baixando {ano:04d}-{mes:02d} ({len(dias_do_mes)} dia(s)) "
-              f"— a fila do CDS pode levar alguns minutos...")
-        bruto = os.path.join(tempfile.gettempdir(),
-                             f"era5_{ano:04d}{mes:02d}_{hora:02d}.nc")
-        try:
-            baixa_mes(cliente, ano, mes, dias_do_mes, hora, dominio, bruto)
-            gravados = converte_cds(bruto, None, hora, caminhos, base,
-                                    args.sobrescrever)
-            total += len(gravados)
-        except Exception as e:
-            print(f"ERRO em {ano:04d}-{mes:02d}: {e}", file=sys.stderr)
-        finally:
-            if os.path.exists(bruto):
-                os.unlink(bruto)
+    for hora, lista in sorted(pendentes_por_hora.items()):
+        for ano, mes, dias_do_mes in agrupa_por_mes(lista):
+            print(f"Baixando {ano:04d}-{mes:02d} às {hora:02d} UTC "
+                  f"({len(dias_do_mes)} dia(s)) — a fila do CDS pode levar "
+                  f"alguns minutos...")
+            bruto = os.path.join(tempfile.gettempdir(),
+                                 f"era5_{ano:04d}{mes:02d}_{hora:02d}.nc")
+            try:
+                baixa_mes(cliente, ano, mes, dias_do_mes, hora, dominio,
+                          bruto)
+                gravados = converte_cds(bruto, None, hora, caminhos, base,
+                                        args.sobrescrever)
+                total += len(gravados)
+            except Exception as e:
+                print(f"ERRO em {ano:04d}-{mes:02d} {hora:02d} UTC: {e}",
+                      file=sys.stderr)
+            finally:
+                if os.path.exists(bruto):
+                    os.unlink(bruto)
 
-    print(f"Concluído: {total} dia(s) convertidos.")
+    print(f"Concluído: {total} arquivo(s) dia-hora convertidos.")
 
 
 if __name__ == "__main__":

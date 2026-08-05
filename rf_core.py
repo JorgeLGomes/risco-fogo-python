@@ -58,6 +58,23 @@ FILL_VALUE = -999.0
 # Número de dias/tempos de precipitação esperados (119 IMERG + 1 GFS).
 ND_ESPERADO = 120
 
+# Escala da umidade relativa no Fator de Umidade FU = -0.008*UR + 1.3.
+#
+# O NCL original converte a UR de % para FRAÇÃO (ur2m = ur2m/100.) antes
+# de aplicar essa equação; com UR entre 0 e 1, o FU fica praticamente
+# constante (1,292–1,300) e a umidade quase não modula o RF. Os
+# coeficientes (-0,008 e 1,3), porém, foram claramente pensados para a UR
+# em PORCENTAGEM (FU = 1,14 a 20 % e 0,58 a 90 %).
+#
+# O padrão do pacote é "ncl" — reproduzir a operação exatamente. As outras
+# opções existem para quantificar o efeito dessa escolha (e para uma
+# eventual correção, depois de validada com o autor do modelo).
+FATOR_UR = {
+    "ncl": 1.0,          # UR em fração 0–1 (idêntico ao NCL/operação)
+    "decimos": 10.0,     # UR em décimos 0–10
+    "percentual": 100.0,  # UR em % 0–100 (o que a equação parece supor)
+}
+
 
 # ---------------------------------------------------------------------------
 # Interpolação bilinear (substitui a função linint2_Wrap do NCL)
@@ -223,7 +240,8 @@ def calcula_risco_fogo(arquivo_temp_ur,
                        log=print,
                        usar_vegetacao=True,
                        usar_topografia=True,
-                       classe_veg_uniforme=4):
+                       classe_veg_uniforme=4,
+                       correcao_ur="ncl"):
     """Calcula o Risco de Fogo previsto em 1 km e grava o NetCDF de saída.
 
     Parameters
@@ -272,6 +290,7 @@ def calcula_risco_fogo(arquivo_temp_ur,
         usar_vegetacao=usar_vegetacao,
         usar_topografia=usar_topografia,
         classe_veg_uniforme=classe_veg_uniforme,
+        correcao_ur=correcao_ur,
     )
 
 
@@ -281,7 +300,7 @@ def calcula_risco_fogo_dados(precip_invertida, lat_prec, lon_prec,
                              arquivo_saida, data_previsao,
                              rb_maximo=0.9, titulo=None, log=print,
                              usar_vegetacao=True, usar_topografia=True,
-                             classe_veg_uniforme=4):
+                             classe_veg_uniforme=4, correcao_ur="ncl"):
     """Calcula o RF a partir de arrays já carregados (qualquer fonte).
 
     Parameters
@@ -402,8 +421,15 @@ def calcula_risco_fogo_dados(precip_invertida, lat_prec, lon_prec,
     log("Calculando o fator FU")
     log("")
     # Fator de Umidade (FU). Alterado em 11/04/2019 de "-0.006" para "-0.008"
-    # para incluir a sazonalidade do RF.
-    FU = (-0.008 * ur2m) + 1.3
+    # para incluir a sazonalidade do RF. A escala da UR é configurável
+    # (ver FATOR_UR): "ncl" reproduz a operação (UR em fração).
+    if correcao_ur not in FATOR_UR:
+        raise ValueError(f"correcao_ur inválida: '{correcao_ur}'. "
+                         f"Use uma de {sorted(FATOR_UR)}.")
+    if correcao_ur != "ncl":
+        log(f"AVISO: escala da UR no FU alterada para '{correcao_ur}' "
+            f"(fator {FATOR_UR[correcao_ur]:.0f}x) — difere da operação.")
+    FU = (-0.008 * ur2m * FATOR_UR[correcao_ur]) + 1.3
     FU_int_1km = interp_bilinear(FU, lat_gfs, lon_gfs, lat_1km, lon_1km)
 
     log("")
@@ -470,6 +496,9 @@ def calcula_risco_fogo_dados(precip_invertida, lat_prec, lon_prec,
             f"{classe_veg_uniforme}; grade da precipitacao)")
     if not usar_topografia:
         extras["fator_topografia"] = "DESLIGADO (FTOP = 1)"
+    if correcao_ur != "ncl":
+        extras["escala_ur_no_FU"] = (f"{correcao_ur} (UR x "
+                                     f"{FATOR_UR[correcao_ur]:.0f})")
     grava_netcdf_rf(xT, lat_1km, lon_1km, data_previsao, arquivo_saida,
                     titulo=titulo, atributos_extras=extras or None)
 
@@ -480,11 +509,18 @@ def calcula_risco_fogo_dados(precip_invertida, lat_prec, lon_prec,
 # Agregações de campos de RF (média/máximo de vários arquivos)
 # ---------------------------------------------------------------------------
 
-def le_campo_rf(caminho):
-    """Lê o campo de RF de um arquivo RF.OBS/RF.PREV: devolve
-    (rf 2D com NaN nos ausentes, lat, lon, nome da variável)."""
+def le_campo_rf(caminho, nome_var=None):
+    """Lê um campo 2D de um arquivo do pipeline (RF.OBS/RF.PREV/FWI.OBS):
+    devolve (campo com NaN nos ausentes, lat, lon, nome da variável).
+
+    ``nome_var`` escolhe a variável em arquivos com mais de uma (ex.: os
+    componentes do FWI); por padrão usa a primeira."""
     with xr.open_dataset(caminho, decode_times=False) as ds:
-        nome = next(iter(ds.data_vars))
+        nome = nome_var if nome_var else next(iter(ds.data_vars))
+        if nome not in ds.data_vars:
+            raise KeyError(f"Variável '{nome}' não existe em "
+                           f"{os.path.basename(caminho)} "
+                           f"(disponíveis: {sorted(ds.data_vars)}).")
         v = ds[nome]
         dados = np.asarray(v.values, dtype=np.float32)
         if dados.ndim == 3:
@@ -498,7 +534,7 @@ def le_campo_rf(caminho):
 
 
 def agrega_campos(caminhos_dias, arquivo_saida, operacao="media", titulo=None,
-                   data_ref=None, log=print):
+                  data_ref=None, log=print, nome_var=None):
     """Agrega vários RF diários num único campo (``media`` ou ``maximo``),
     ignorando valores ausentes, e grava no mesmo formato dos diários.
 
@@ -510,7 +546,7 @@ def agrega_campos(caminhos_dias, arquivo_saida, operacao="media", titulo=None,
     usados = 0
 
     for caminho in caminhos_dias:
-        dados, la, lo, _ = le_campo_rf(caminho)
+        dados, la, lo, _ = le_campo_rf(caminho, nome_var)
         if lat is None:
             lat, lon = la, lo
             soma = np.zeros_like(dados, dtype=np.float64)

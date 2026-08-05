@@ -143,7 +143,60 @@ git commit -m "Adiciona ERA5 (prepara_era5) e Risco de Fogo observado (rf_observ
 git push origin main
 ```
 
-Por último, o RF médio também no previsto (rodadas sazonais do BESM):
+Por último, o horário do ERA5 e a escala da UR:
+
+```powershell
+git add -A
+git commit -m "Adiciona horario solar local do ERA5 e chave de escala da UR
+
+- era5_tempo.py: fusos solares por longitude, horas UTC necessarias e
+  composicao do campo faixa a faixa
+- rf_config: nova secao 'era5' (horario fixo|solar, hora, hora_local,
+  horas) e chave correcao_ur em 'execucao'
+- prepara_era5: baixa as horas UTC ditadas pela secao 'era5' (uma no modo
+  fixo; todas as que cobrem as faixas de longitude no modo solar), com
+  --hora aceitando lista explicita
+- rf_observado/fwi_observado: modo solar monta T, UR e vento por faixa de
+  fuso; produto ganha sufixo _SOLAR e os arquivos sao rotulados pela hora
+  local; --horario e --hora-local sobrepoem o config
+- rf_core: escala da UR no FU configuravel (FATOR_UR: ncl|decimos|
+  percentual); o padrao 'ncl' reproduz a operacao (UR em fracao, FU quase
+  constante), as demais sao para analise de sensibilidade e ganham sufixo
+  (_URDEC/_URPER) e atributo escala_ur_no_FU no NetCDF
+- rf_previsto/rf_observado: --correcao-ur
+- teste_era5_horario.py: fusos, composicao por faixa, produtos separados e
+  efeito da escala da UR
+- Manual v2.2: novas secoes 6.6 (horario) e 6.7 (escala da UR)"
+
+git push origin main
+```
+
+Antes disso, o motor FWI:
+
+```powershell
+git add -A
+git commit -m "Implementa o motor FWI (Canadian Fire Weather Index System)
+
+- fwi_core.py: FFMC, DMC, DC, ISI, BUI, FWI e DSR vetorizados em numpy,
+  com ajuste hemisferico por faixas de latitude (tabelas de duracao do
+  dia do DMC e do DC) e estado (EstadoFWI) que atravessa os dias
+- fwi_observado.py: FWI observado diario a partir do IMERG (chuva) e da
+  ERA5 (T, UR e vento 10 m); calculo sequencial com spin-up (padrao 90
+  dias), estado salvo/retomado (--estado-inicial/--salvar-estado),
+  saida com os 7 componentes por dia e agregacoes (--media/--media-mensal)
+- rf_core: le_campo_rf/agrega_campos aceitam nome_var (arquivos com
+  varias variaveis, como os do FWI)
+- rf_figura: reconhece arquivos FWI.* e usa as classes do indice
+  (0-5-12-22-35); --var plota qualquer componente
+- teste_fwi.py: tabela de referencia do CFFWIS (inclui o exemplo classico
+  de Van Wagner), validacao cruzada com o xclim (<1e-9), propriedades
+  fisicas, ponta a ponta e continuidade do estado
+- Manual v2.1: nova secao 7 (FWI); requirements: xclim (so para teste)"
+
+git push origin main
+```
+
+Antes disso, o RF médio também no previsto (rodadas sazonais do BESM):
 
 ```powershell
 git add -A

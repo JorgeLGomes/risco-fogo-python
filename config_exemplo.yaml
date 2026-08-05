@@ -40,6 +40,32 @@ caminhos:
   log: log
 
 # ----------------------------------------------------------------------------
+# ERA5: horário das variáveis meteorológicas dos produtos OBSERVADOS
+# (rf_observado.py e fwi_observado.py) e horas baixadas pelo prepara_era5.py
+# ----------------------------------------------------------------------------
+# A ERA5 é instantânea (valor da hora cheia). Os índices de perigo pedem as
+# condições do momento mais crítico do dia — meio da tarde no RF, meio-dia
+# local no FWI —, e NÃO a média diária (a média rebaixa a temperatura, sobe
+# a umidade e comprime a variabilidade, subestimando o risco).
+#
+#   horario: fixo    -> uma única hora UTC para todo o domínio.
+#                       É o que a operação faz (18 UTC), mas 18 UTC equivale
+#                       a 16 h no litoral do Nordeste e 13 h no Acre.
+#   horario: solar   -> HORA SOLAR LOCAL: cada faixa de longitude usa a hora
+#                       UTC correspondente (fusos de 15°). O prepara_era5.py
+#                       passa a baixar todas as horas necessárias e o campo
+#                       é montado faixa a faixa. O produto ganha o sufixo
+#                       _SOLAR e os arquivos são rotulados pela hora local.
+#
+# hora_local: 15 -> meio da tarde (convenção do RF)
+# hora_local: 12 -> meio-dia local (convenção do FWI canadense)
+era5:
+  horario: fixo          # fixo | solar
+  hora: 18               # hora UTC usada quando horario: fixo
+  hora_local: 15         # hora solar local usada quando horario: solar
+  # horas: [17, 18, 19, 20]   # opcional: horas UTC explícitas a baixar/usar
+
+# ----------------------------------------------------------------------------
 # Fontes de previsão (mesmas chaves do rf_fontes.py / --config-fontes)
 # ----------------------------------------------------------------------------
 fontes:
@@ -153,6 +179,25 @@ execucao:
   sem_vegetacao: false
   sem_topografia: false
   classe_veg: 4
+
+  # --------------------------------------------------------------------------
+  # Escala da umidade relativa no Fator de Umidade (FU = -0,008·UR + 1,3)
+  # --------------------------------------------------------------------------
+  # ATENÇÃO — achado da conversão: o NCL original converte a UR de % para
+  # FRAÇÃO (ur2m/100) antes desta equação. Com UR entre 0 e 1, o FU fica
+  # praticamente constante (1,292–1,300) e a umidade quase não modula o RF.
+  # Os coeficientes, porém, parecem ter sido pensados para a UR em % (FU =
+  # 1,14 a 20 % e 0,58 a 90 %).
+  #
+  #   correcao_ur: ncl         -> idêntico à operação (padrão)
+  #   correcao_ur: decimos     -> UR em décimos (0–10)
+  #   correcao_ur: percentual  -> UR em % (0–100)
+  #
+  # Qualquer valor diferente de 'ncl' acrescenta sufixo ao produto
+  # (_URDEC / _URPER) e registra a escolha nos atributos do NetCDF, para
+  # nunca se misturar com a rodada de referência. Convém validar com o
+  # autor do modelo antes de adotar.
+  correcao_ur: ncl
 
   # --------------------------------------------------------------------------
   # Agregações (RF médio) — também disponíveis na CLI

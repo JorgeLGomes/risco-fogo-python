@@ -13,11 +13,14 @@ rf_previsto_1_2_semanas.py    # Produto semanal: 2 previsões (+7 e +14 dias, 18
 rf_previsto.py                # Script genérico: qualquer horizonte e fonte (GFS ~16d; Eta/BESM até 13 meses)
 rf_fontes.py                  # Camada de fontes: config por fonte, agregação 1h/12h/1d, série IMERG+previsão
 rf_config.py                  # Configuração YAML dos dados de entrada (--config)
+era5_tempo.py                 # Horário do ERA5: hora fixa UTC ou hora solar local (fusos)
 prepara_gfs.py                # Download do GFS (fast download .idx / grib filter — pós-SCN 25-81)
 prepara_imerg.py              # Download/conversão do IMERG Early Daily V07 (GES DISC, Earthdata)
 prepara_era5.py               # Download/conversão da ERA5: t2m, ur2m (de t+td), u10, v10 (CDS/Copernicus)
 rf_observado.py               # RF OBSERVADO (IMERG + ERA5): dias/semanas/meses + médias do período
 rf_figura.py                  # Figuras PNG na paleta oficial (SLD do GeoServer)
+fwi_core.py                   # Motor do FWI canadense (FFMC/DMC/DC -> ISI/BUI -> FWI)
+fwi_observado.py              # FWI observado diário (IMERG + ERA5), com spin-up e estado
 teste_rf.py                   # Teste de validação (dados sintéticos + referência fiel ao NCL)
 teste_rf_previsto.py          # Teste de ponta a ponta do script genérico
 teste_rf_multifonte.py        # Teste do modo multifonte (Eta 13m, BESM 12h, fonte via JSON)
@@ -78,6 +81,19 @@ python3 rf_observado.py  --config config.yaml --meses 3 --sem-vegetacao --sem-to
 # Um mês fechado (julho/2026) + o risco MÉDIO do mês, e a figura
 python3 rf_observado.py --de 20260701 --ate 20260731 --media
 python3 rf_figura.py data/output/2.2/RF_OBS/netcdf/RF.OBS.MEDIA.202607.nc
+
+# Horário do ERA5 (config.yaml, seção era5): hora fixa 18 UTC ou hora solar local
+#   era5: {horario: solar, hora_local: 15}  -> baixa 17..20 UTC e monta por fuso
+python3 prepara_era5.py  --config config.yaml --dias 30    # baixa as horas do config
+python3 rf_observado.py  --config config.yaml --dias 30    # produto ganha sufixo _SOLAR
+
+# Sensibilidade da escala da UR no Fator de Umidade (ver manual 6.7)
+python3 rf_observado.py --de 20260701 --ate 20260731 --correcao-ur percentual
+
+# FWI canadense observado (FFMC/DMC/DC -> ISI/BUI -> FWI), com spin-up
+python3 fwi_observado.py --config config.yaml --dias 30
+python3 fwi_observado.py --de 20260701 --ate 20260731 --media-mensal
+python3 rf_figura.py data/output/2.2/FWI_OBS/netcdf/FWI.OBS.2026073118.nc
 ```
 
 ## Validação
@@ -86,6 +102,8 @@ python3 rf_figura.py data/output/2.2/RF_OBS/netcdf/RF.OBS.MEDIA.202607.nc
 python3 teste_rf.py           # núcleo do cálculo — "TODOS OS TESTES PASSARAM"
 python3 teste_rf_previsto.py  # script genérico de ponta a ponta
 python3 teste_rf_multifonte.py # modo multifonte (Eta/BESM)
+python3 teste_fwi.py          # motor FWI (tabela de referência + xclim) e FWI observado
+python3 teste_era5_horario.py # horário da ERA5 (fixo/solar) e escala da UR
 ```
 
 Documentação completa em `docs/manual_usuario.md` (uso e operação),

@@ -8,5 +8,6 @@ cdsapi     # download da ERA5 (prepara_era5.py) — requer ~/.cdsapirc
 matplotlib        # figuras (rf_figura.py)
 global-land-mask  # mascara de oceano nas figuras sem mapa de vegetacao
 
-# apenas para o teste de validacao (teste_rf.py)
-scipy
+# apenas para os testes de validacao
+scipy      # teste_rf.py (referencia fiel ao NCL)
+xclim      # teste_fwi.py (validacao cruzada do CFFWIS; opcional — o teste pula sem ele)

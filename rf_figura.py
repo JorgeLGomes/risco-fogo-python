@@ -70,6 +70,19 @@ LIMITES = [0.0] + QUANTIDADES[:-1] + [1.0001]
 ROTULOS = ["Mínimo\n0–0,15", "Baixo\n0,15–0,40", "Médio\n0,40–0,70",
            "Alto\n0,70–0,95", "Crítico\n0,95–1"]
 
+# Classes do FWI (Canadian FWI System) — faixas usuais de perigo. Como o
+# FWI não é limitado a 1, a escala é definida por limiares absolutos.
+LIMITES_FWI = [0.0, 5.0, 12.0, 22.0, 35.0, 60.0]
+CORES_FWI = ["#17b617", "#79f674", "#ffff82", "#ff2e00", "#a70000"]
+ROTULOS_FWI = ["Muito baixo\n0–5", "Baixo\n5–12", "Moderado\n12–22",
+               "Alto\n22–35", "Muito alto\n> 35"]
+
+
+def escala_fwi():
+    """Escala em classes para os campos do FWI (limiares absolutos)."""
+    cmap = ListedColormap(CORES_FWI)
+    return cmap, BoundaryNorm(LIMITES_FWI, cmap.N)
+
 
 def escala(discreta=False):
     """Devolve (cmap, norm) na paleta oficial. Por padrão reproduz o
@@ -87,11 +100,19 @@ def escala(discreta=False):
 _RE_DATA = re.compile(r"(\d{8})(\d{2})?")
 
 
-def le_campo(caminho):
-    """Lê o RF de um NetCDF do pipeline: (rf 2D com NaN, lat, lon, rótulo)."""
+def le_campo(caminho, nome_var=None):
+    """Lê um campo do pipeline: (campo 2D com NaN, lat, lon, atributos).
+
+    ``nome_var`` escolhe a variável em arquivos com várias (componentes do
+    FWI); por padrão usa a primeira — ou ``FWI``, se existir."""
     import xarray as xr
     with xr.open_dataset(caminho, decode_times=False) as ds:
-        nome = next(iter(ds.data_vars))
+        if nome_var and nome_var in ds.data_vars:
+            nome = nome_var
+        elif "FWI" in ds.data_vars:
+            nome = "FWI"
+        else:
+            nome = next(iter(ds.data_vars))
         dados = np.asarray(ds[nome].values, dtype=np.float32)
         if dados.ndim == 3:
             dados = dados[0]
@@ -99,6 +120,7 @@ def le_campo(caminho):
         lat = np.asarray(ds["lat"].values, dtype=np.float64)
         lon = np.asarray(ds["lon"].values, dtype=np.float64)
         atributos = dict(ds.attrs)
+        atributos["_variavel"] = nome
     return dados, lat, lon, atributos
 
 
@@ -170,6 +192,14 @@ def main():
     parser.add_argument("--titulo", default=None,
                         help="Título geral da figura.")
     parser.add_argument("--dpi", type=int, default=140)
+    parser.add_argument("--var", default=None,
+                        help="Variável a plotar em arquivos com mais de "
+                             "uma (ex.: FFMC, DMC, DC, ISI, BUI, FWI). "
+                             "Padrão: FWI, se existir.")
+    parser.add_argument("--escala-fwi", action="store_true",
+                        help="Usa as classes do FWI (0–5–12–22–35) em vez "
+                             "da escala 0–1 do RF. Ativada "
+                             "automaticamente para arquivos FWI.*")
     parser.add_argument("--classes", action="store_true",
                         help="Usa as faixas discretas (uma cor por classe) "
                              "em vez da rampa interpolada do SLD oficial.")
@@ -186,19 +216,31 @@ def main():
     if not caminhos:
         sys.exit("Nenhum arquivo NetCDF encontrado.")
 
-    cmap, norm = escala(discreta=args.classes)
+    usa_fwi = args.escala_fwi or all(
+        os.path.basename(c).upper().startswith("FWI.") for c in caminhos)
+    cmap, norm = escala_fwi() if usa_fwi else escala(discreta=args.classes)
 
     campos = []
     for caminho in caminhos:
-        dados, lat, lon, atributos = le_campo(caminho)
+        dados, lat, lon, atributos = le_campo(caminho, args.var)
         if not args.sem_mascara:
             dados = mascara_oceano(dados, lat, lon)
-        campos.append((caminho, dados, lat, lon,
-                       rotulo_do_arquivo(caminho, atributos)))
+        rot = rotulo_do_arquivo(caminho, atributos)
+        if usa_fwi or args.var:
+            rot = f"{atributos.get('_variavel', 'FWI')} — {rot}"
+        campos.append((caminho, dados, lat, lon, rot))
 
     def barra(fig, eixos):
         mapa = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-        if args.classes:
+        if usa_fwi:
+            marcas = [(LIMITES_FWI[i] + LIMITES_FWI[i + 1]) / 2
+                      for i in range(len(CORES_FWI))]
+            cb = fig.colorbar(mapa, ax=eixos, orientation="horizontal",
+                              fraction=0.05, pad=0.10, aspect=40,
+                              ticks=marcas, extend="max")
+            cb.ax.set_xticklabels(ROTULOS_FWI, fontsize=8)
+            cb.set_label("Fire Weather Index", fontsize=9, labelpad=6)
+        elif args.classes:
             marcas = [(LIMITES[i] + LIMITES[i + 1]) / 2
                       for i in range(len(CORES))]
             cb = fig.colorbar(mapa, ax=eixos, orientation="horizontal",

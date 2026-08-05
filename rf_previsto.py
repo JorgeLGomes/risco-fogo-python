@@ -250,6 +250,7 @@ def processa_previsao(parametros):
                     log=log,
                     usar_vegetacao=parametros.get("usar_vegetacao", True),
                     usar_topografia=parametros.get("usar_topografia", True),
+                    correcao_ur=parametros.get("correcao_ur", "ncl"),
                     classe_veg_uniforme=parametros.get("classe_veg_uniforme", 4),
                 )
             else:
@@ -299,6 +300,7 @@ def processa_previsao(parametros):
                     log=log,
                     usar_vegetacao=parametros.get("usar_vegetacao", True),
                     usar_topografia=parametros.get("usar_topografia", True),
+                    correcao_ur=parametros.get("correcao_ur", "ncl"),
                     classe_veg_uniforme=parametros.get("classe_veg_uniforme", 4),
                 )
         return (data_previsao, True, "")
@@ -405,6 +407,13 @@ def main():
     parser.add_argument("--classe-veg", type=int, default=4,
                         help="Classe usada com --sem-vegetacao (padrão 4: "
                              "A=2.4, PSE_max=75).")
+    parser.add_argument("--correcao-ur", default="ncl",
+                        choices=sorted(rf_core.FATOR_UR),
+                        help="Escala da UR no Fator de Umidade: 'ncl' "
+                             "(padrão, idêntico à operação — UR em fração, "
+                             "FU quase constante), 'decimos' ou "
+                             "'percentual' (UR em %%). Não-'ncl' acrescenta "
+                             "sufixo ao produto.")
     parser.add_argument("--media-mensal", action="store_true",
                         help="Gera o RF MÉDIO de cada mês-calendário "
                              "coberto pelas previsões "
@@ -507,6 +516,8 @@ def main():
         produto += "_SEMVEG"
     if args.sem_topografia:
         produto += "_SEMTOPO"
+    if args.correcao_ur != "ncl":
+        produto += "_UR" + args.correcao_ur.upper()[:3]
 
     dirin_gfs = f"{base}/data/output/2.2/GFS/netcdf/{data_modelo}"
     if fonte is not None:
@@ -573,6 +584,7 @@ def main():
             "usar_vegetacao": not args.sem_vegetacao,
             "usar_topografia": not args.sem_topografia,
             "classe_veg_uniforme": args.classe_veg,
+            "correcao_ur": args.correcao_ur,
             "fonte": fonte.nome if fonte else None,
             "config_fontes": args.config_fontes,
             "config": args.config,

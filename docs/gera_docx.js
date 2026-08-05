@@ -295,7 +295,7 @@ man.push(
     "Manual do Usuário",
     "Risco de Fogo Previsto em Python — INPE_FireRiskModel v2.2",
     [
-      "Versão 2.0 · 5 de agosto de 2026",
+      "Versão 2.2 · 5 de agosto de 2026",
       "Substitui: rf_previsto_1-5dias_2023.sh e rf_previsto_1-2_semanas_2024.sh (bash + NCL)",
       "Programa Queimadas — http://www.inpe.br/queimadas/",
     ],
@@ -306,12 +306,13 @@ man.push(
       "4. Uso",
       "5. Script genérico para qualquer horizonte (rf_previsto.py)",
       "6. Preparo dos dados, RF observado e figuras (prepara_gfs, prepara_imerg, prepara_era5, rf_observado, rf_figura)",
-      "7. Saídas",
-      "8. Logs e monitoramento",
-      "9. Solução de problemas",
-      "10. Testes de validação",
-      "11. Segurança",
-      "12. Suporte",
+      "7. FWI — Canadian Fire Weather Index System",
+      "8. Saídas",
+      "9. Logs e monitoramento",
+      "10. Solução de problemas",
+      "11. Testes de validação",
+      "12. Segurança",
+      "13. Suporte",
     ]
   )
 );
@@ -323,6 +324,7 @@ man.push(bullet([{ t: "rf_previsto_1_2_semanas.py", b: true }, { t: " — gera 2
 man.push(bullet([{ t: "rf_previsto.py", b: true }, { t: " — script genérico: gera o RF para qualquer horizonte de previsão e diferentes fontes de dados (GFS, Eta, BESM) informados na linha de comando (seção 5)." }]));
 man.push(bullet([{ t: "rf_observado.py", b: true }, { t: " — RF observado dos últimos dias, semanas ou meses, com IMERG + ERA5, incluindo médias do período e mensais (seção 6.4)." }]));
 man.push(bullet([{ t: "rf_figura.py", b: true }, { t: " — figuras PNG dos campos de RF na paleta oficial da operação (seção 6.5)." }]));
+man.push(bullet([{ t: "fwi_core.py / fwi_observado.py", b: true }, { t: " — motor do FWI (Canadian Fire Weather Index System) e o FWI observado diário (seção 7)." }]));
 man.push(p("Ambos usam o módulo comum rf_core.py e produzem, para cada horário de previsão, um NetCDF (RF.PREV.YYYYMMDDHH.nc) e um GeoTIFF (RF.PREV.YYYYMMDDHH.tif), além dos produtos derivados (links D1–D5, cópias T0–T4/T7/T14 e fogograma)."));
 
 man.push(h1("2. Requisitos"));
@@ -350,7 +352,7 @@ man.push(p("Todos os caminhos partem do diretório base. O padrão embutido (em 
 
 man.push(h1("3. Instalação"));
 man.push(p("Copie os arquivos para o diretório de scripts do modelo (os testes são opcionais):"));
-man.push(...codigo(["rf_core.py", "rf_fontes.py", "rf_config.py", "config_exemplo.yaml", "ativa_riscofogo.sh", "rf_previsto_1_5dias.py", "rf_previsto_1_2_semanas.py", "rf_previsto.py", "prepara_gfs.py", "prepara_imerg.py", "prepara_era5.py", "rf_observado.py", "rf_figura.py", "config_besm.yaml", "teste_rf.py", "teste_rf_previsto.py", "teste_rf_multifonte.py", "teste_prepara_gfs.py", "teste_prepara_imerg.py", "teste_prepara_era5.py", "teste_rf_observado.py"]));
+man.push(...codigo(["rf_core.py", "rf_fontes.py", "rf_config.py", "config_exemplo.yaml", "ativa_riscofogo.sh", "rf_previsto_1_5dias.py", "rf_previsto_1_2_semanas.py", "rf_previsto.py", "prepara_gfs.py", "prepara_imerg.py", "prepara_era5.py", "rf_observado.py", "rf_figura.py", "fwi_core.py", "fwi_observado.py", "era5_tempo.py", "config_besm.yaml", "teste_rf.py", "teste_rf_previsto.py", "teste_rf_multifonte.py", "teste_prepara_gfs.py", "teste_prepara_imerg.py", "teste_prepara_era5.py", "teste_rf_observado.py"]));
 man.push(p("Os scripts devem ficar no mesmo diretório (os orquestradores fazem import rf_core). Se desejar, torne-os executáveis:"));
 man.push(...codigo(["chmod +x rf_previsto_1_5dias.py rf_previsto_1_2_semanas.py"]));
 man.push(h2("3.1 Ambiente Python no cluster (ativa_riscofogo.sh)"));
@@ -620,6 +622,13 @@ man.push(...codigo([
   "python3 prepara_era5.py --simular                            # só o plano (sem baixar)",
 ]));
 man.push(p("A ERA5 tem atraso de ~5 dias (dias recentes vêm do produto preliminar ERA5T, tratado automaticamente), por isso a janela padrão termina 6 dias atrás. As requisições ao CDS são agrupadas por mês (mais eficientes na fila do Copernicus — cada uma pode esperar alguns minutos); a hora da análise é configurável (--hora, padrão 18 UTC, a mesma dos produtos do RF), dias completos são pulados e --sobrescrever regrava."));
+man.push(p([{ t: "Download incremental. ", b: true }, { t: "O script confere o que já existe por par (dia, hora) antes de pedir qualquer coisa ao CDS: um dia só é considerado pronto quando os dois arquivos daquela hora existem (T/UR e vento). O que já está no disco não é baixado nem regravado (para refazer, use --sobrescrever), então uma execução interrompida é retomada sem custo — basta rodar de novo que ele completa apenas as lacunas. O --simular mostra exatamente esse plano, uma requisição por mês e por hora:" }]));
+man.push(...codigo([
+  "Arquivos (dia x hora): 21; 5 ja existem, 16 a baixar",
+  "  requisicao CDS: 2026-06 as 17 UTC, 2 dia(s): [2, 3]",
+  "  requisicao CDS: 2026-06 as 18 UTC, 1 dia(s): [3]",
+]));
+man.push(p([{ t: "Dica de volume. ", b: true }, { t: "No modo solar, o número de horas depende da largura do domínio: o padrão (-114,95 a -30,05, que alcança o Pacífico) exige 7 horas UTC; restringindo ao Brasil (--dominio -35,7,-75,-32) caem para 4 — quase metade do volume. Confira antes se o domínio menor cobre toda a grade do IMERG, já que os produtos observados usam a grade da precipitação como referência." }]));
 man.push(h2("6.4 Risco de Fogo observado (rf_observado.py)"));
 man.push(p("O rf_observado.py calcula o RF observado de dias que já passaram — últimos dias, semanas ou meses — usando apenas observações: a série completa de 120 dias do IMERG (incluindo o próprio dia analisado) e a T2m/UR2m da ERA5 na hora da análise. É a mesma formulação do modelo (rb_max 0,9 e fatores FU/FT/FLAT/FTOP), o que permite reconstituir o histórico recente e comparar com as previsões (RF.PREV.* × RF.OBS.*)."));
 man.push(...codigo([
@@ -666,8 +675,85 @@ man.push(...codigo([
 ]));
 man.push(p("Opções: --painel (vários campos numa figura) com --colunas, --titulo, --saida (arquivo ou pasta), --dpi, --classes (uma cor por faixa, em vez da rampa — útil para leitura por classe) e --sem-mascara (não aplica a máscara de oceano, necessária apenas em campos gerados com --sem-vegetacao, que não trazem a máscara d'água). Requer matplotlib (e global-land-mask para a máscara de oceano)."));
 
-man.push(h1("7. Saídas"));
-man.push(h2("7.1 Produto diário (1 a 5 dias)"));
+man.push(h2("6.6 Horário da ERA5: hora fixa ou hora solar local"));
+man.push(p("As variáveis da ERA5 são instantâneas (o valor da hora cheia), e é isso que os índices de perigo pedem: as condições do momento mais crítico do dia — o meio da tarde no RF, o meio-dia local no FWI. Uma média diária não seria equivalente: ela rebaixa a temperatura, sobe a umidade e comprime a variabilidade, subestimando o risco de forma sistemática (num dia típico de seca no Cerrado, trocar as 18 UTC pela média do dia derruba o fator de temperatura em ~13 %)."));
+man.push(p("Há, porém, um problema real com a hora fixa num domínio largo: 18 UTC é 16 h no litoral do Nordeste e 13 h no Acre. Por isso a seção era5 do config.yaml oferece os dois modos:"));
+man.push(...codigo([
+  "era5:",
+  "  horario: fixo          # fixo | solar",
+  "  hora: 18               # hora UTC no modo fixo (o que a operacao usa)",
+  "  hora_local: 15         # hora solar local no modo solar (12 = convencao do FWI)",
+  "  # horas: [17, 18, 19, 20]   # opcional: horas UTC explicitas",
+]));
+man.push(p("No modo solar, cada faixa de longitude (fusos solares de 15°) usa a hora UTC correspondente à hora local pedida, e o campo é montado faixa a faixa. Sobre o Brasil, hora_local: 15 precisa das horas 17, 18, 19 e 20 UTC; hora_local: 12 (FWI) precisa de 14 a 17 UTC. O prepara_era5.py lê a mesma seção e baixa exatamente essas horas:"));
+man.push(...codigo([
+  "python3 prepara_era5.py --config config.yaml --dias 30   # horas conforme o config",
+  "python3 prepara_era5.py --dias 30 --hora 17,18,19,20     # horas explicitas",
+  "python3 prepara_era5.py --config config.yaml --simular   # mostra o plano por hora",
+]));
+man.push(p("Os produtos observados (rf_observado.py e fwi_observado.py) seguem a mesma configuração, com --horario e --hora-local para sobrepor pontualmente. No modo solar o produto ganha o sufixo _SOLAR e os arquivos são rotulados pela hora local (RF.OBS.2026073115.nc), de modo que as duas convenções nunca se misturam. Custo a considerar: o modo solar multiplica o volume baixado da ERA5 pelo número de horas (4x sobre o Brasil, mais em domínios que chegam ao Pacífico)."));
+man.push(h2("6.7 Escala da umidade relativa no Fator de Umidade (correcao_ur)"));
+man.push(p("Um achado da conversão que merece atenção: o NCL original converte a UR de porcentagem para fração (ur2m = ur2m/100.) antes de aplicar FU = -0,008·UR + 1,3. Com a UR entre 0 e 1, o FU fica praticamente constante (1,292 a 1,300) — ou seja, na prática a umidade quase não modula o RF operacional, e o produto sai multiplicado por ~1,3. Os coeficientes, porém, parecem ter sido pensados para a UR em porcentagem: aí o FU iria de 1,14 (UR 20 %) a 0,58 (UR 90 %), que é o comportamento que a descrição do modelo sugere."));
+man.push(p("Como a conversão para Python reproduz o NCL fielmente, o padrão continua sendo o comportamento da operação. A chave correcao_ur permite quantificar o efeito da escolha:"));
+man.push(tabela(["Valor", "UR usada no FU", "FU a 40 % de UR"], [
+  ["ncl (padrão)", "fração (0–1)", "1,297"],
+  ["decimos", "décimos (0–10)", "1,268"],
+  ["percentual", "porcentagem (0–100)", "0,980"],
+], [25, 45, 30]));
+man.push(...codigo([
+  "execucao:",
+  "  correcao_ur: ncl        # ncl | decimos | percentual",
+  "",
+  "python3 rf_observado.py --de 20260701 --ate 20260731 --correcao-ur percentual",
+  "python3 rf_previsto.py  --horizontes 3d --correcao-ur percentual",
+]));
+man.push(p([{ t: "Recomendação: ", b: true }, { t: "qualquer valor diferente de ncl acrescenta sufixo ao produto (_URDEC, _URPER) e registra a escolha no atributo global escala_ur_no_FU, para nunca se misturar com a rodada de referência. Trate como análise de sensibilidade e valide com o autor do modelo antes de qualquer mudança na operação." }]));
+
+man.push(h1("7. FWI — Canadian Fire Weather Index System"));
+man.push(p("Além do RF do INPE, o pacote traz o FWI canadense completo, o índice único proposto na metodologia multi-horizonte. Os dois convivem: consomem os mesmos arquivos de entrada e escrevem no mesmo padrão de saída, o que permite compará-los ponto a ponto."));
+man.push(h2("7.1 O motor (fwi_core.py)"));
+man.push(p("Implementação vetorizada em numpy dos seis componentes do sistema, na ordem de cálculo:"));
+man.push(tabela(["Componente", "O que representa", "Memória"], [
+  ["FFMC", "umidade do combustível fino", "~2/3 de dia"],
+  ["DMC", "umidade da camada orgânica", "~12 dias"],
+  ["DC", "seca profunda", "~52 dias"],
+  ["ISI", "FFMC + vento (espalhamento inicial)", "—"],
+  ["BUI", "DMC + DC (combustível disponível)", "—"],
+  ["FWI", "ISI + BUI (índice final)", "—"],
+], [18, 57, 25]));
+man.push(p("Também é calculado o DSR (Daily Severity Rating). As entradas seguem a convenção do sistema — condições do meio-dia local: temperatura (°C), umidade relativa (%), vento a 10 m (km/h) e precipitação acumulada nas 24 h anteriores (mm). O ajuste hemisférico é feito por faixas de latitude (tabelas de duração do dia para DMC e DC), de modo que o comportamento sazonal fica correto no Hemisfério Sul e na faixa equatorial."));
+man.push(p([{ t: "Validação: ", b: true }, { t: "o motor é comparado, no teste_fwi.py, com a tabela de referência do sistema — incluindo o exemplo clássico de Van Wagner & Pickett (T=17 °C, UR=42 %, vento=25 km/h, chuva=0, partindo de FFMC=85, DMC=6, DC=15, que deve dar FFMC 87,7 · DMC 8,5 · DC 19,0 · ISI 10,9 · BUI 8,5 · FWI 10,1) — e, quando o xclim está instalado, também contra a implementação de referência do CFFWIS, em cinco faixas de latitude e quatro meses, com diferença menor que 1e-9." }]));
+man.push(h2("7.2 FWI observado (fwi_observado.py)"));
+man.push(p("Calcula o FWI diário a partir do IMERG (chuva) e da ERA5 (T, UR e vento — daí a importância do prepara_era5.py já baixar U10m/V10m). Diferente do RF, que é independente por dia, o FWI é sequencial: cada dia parte dos códigos de umidade do dia anterior. O script cuida disso de duas formas: rodando um período de aquecimento (spin-up, padrão 90 dias) antes do primeiro dia pedido, e permitindo salvar/retomar o estado entre execuções."));
+man.push(...codigo([
+  "# Ultimos 30 dias (com 90 dias de spin-up antes)",
+  "python3 fwi_observado.py --config config.yaml --dias 30",
+  "",
+  "# Um mes fechado + a media mensal do FWI",
+  "python3 fwi_observado.py --de 20260701 --ate 20260731 --media-mensal",
+  "",
+  "# Rodada continua: retoma do estado salvo e grava o novo",
+  "python3 fwi_observado.py --de 20260801 --ate 20260805 \\",
+  "    --estado-inicial estado_fwi.nc --salvar-estado estado_fwi.nc",
+  "",
+  "# Conferir as entradas sem calcular",
+  "python3 fwi_observado.py --de 20260701 --ate 20260731 --simular",
+]));
+man.push(p("Cada dia gera um FWI.OBS.{data}{hora}.nc com os sete campos (FFMC, DMC, DC, ISI, BUI, FWI, DSR) em data/output/2.2/FWI_OBS/netcdf. As variáveis meteorológicas da ERA5 (0,25°) são interpoladas para a grade do IMERG (0,1°), que é a grade de saída. Dias sem entradas completas são pulados com aviso e o estado é mantido, sem quebrar a série."));
+man.push(p("Opções: --dias/--semanas/--meses/--de+--ate e --data-final (como no rf_observado.py), --spinup N, --estado-inicial/--salvar-estado, --ffmc0/--dmc0/--dc0 (partida a frio, padrão 85/6/15), --media, --media-mensal, --maximo, --var-agrega (componente agregado, padrão FWI), --produto, --hora e --simular."));
+man.push(p([{ t: "Convenção de hora: ", b: true }, { t: "o sistema canadense usa as condições do meio-dia local — sobre o Brasil (UTC−3), ~15 UTC. O padrão do script é 18 UTC apenas para reaproveitar o banco de ERA5 já baixado para o RF; para seguir a convenção à risca, baixe a ERA5 com prepara_era5.py --hora 15 e rode o FWI com --hora 15." }]));
+man.push(h2("7.3 Figuras do FWI"));
+man.push(p("O rf_figura.py reconhece os arquivos FWI.* e usa automaticamente as classes do índice (0–5–12–22–35), além de permitir plotar qualquer componente:"));
+man.push(...codigo([
+  "python3 rf_figura.py data/output/2.2/FWI_OBS/netcdf/FWI.OBS.2026073118.nc",
+  "python3 rf_figura.py .../FWI.OBS.2026073118.nc --var DC     # seca profunda",
+  "python3 rf_figura.py .../FWI.OBS.202607*.nc --painel --colunas 7",
+]));
+man.push(h2("7.4 O que falta para o FWI previsto"));
+man.push(p("O FWI observado fecha a \"análise de fogo contínua\" da metodologia. Para o FWI previsto falta apenas o vento nas fontes de previsão: o prepara_gfs.py hoje baixa APCP, TMP e RH — acrescentar UGRD/VGRD a 10 m habilita o FWI de curto prazo; nas fontes sazonais (BESM/Eta) o vento precisa vir no pacote de dados. A condição inicial dos códigos de umidade sai naturalmente do estado salvo pelo fwi_observado.py (--estado-inicial)."));
+
+man.push(h1("8. Saídas"));
+man.push(h2("8.1 Produto diário (1 a 5 dias)"));
 man.push(
   tabela(
     ["Saída", "Local"],
@@ -682,7 +768,7 @@ man.push(
   )
 );
 man.push(p(""));
-man.push(h2("7.2 Produto semanal (1 a 2 semanas)"));
+man.push(h2("8.2 Produto semanal (1 a 2 semanas)"));
 man.push(
   tabela(
     ["Saída", "Local"],
@@ -694,11 +780,11 @@ man.push(
   )
 );
 man.push(p(""));
-man.push(h2("7.3 Formato dos arquivos"));
+man.push(h2("8.3 Formato dos arquivos"));
 man.push(p("O NetCDF contém a variável rbf(time, lat, lon) com o RF em [0, 1], arredondado a 2 casas decimais, valor ausente −999 e eixo de tempo na data/hora da previsão. O GeoTIFF está em EPSG:4326, orientado de norte para sul, com nodata −999, compressão LZW e organização em tiles."));
 man.push(p("Interpretação usual do RF: mínimo (< 0.15), baixo (0.15–0.40), médio (0.40–0.70), alto (0.70–0.95) e crítico (≥ 0.95)."));
 
-man.push(h1("8. Logs e monitoramento"));
+man.push(h1("9. Logs e monitoramento"));
 man.push(
   tabela(
     ["Log", "Conteúdo"],
@@ -713,7 +799,7 @@ man.push(
 man.push(p(""));
 man.push(p("O código de saída é 0 em caso de sucesso e 1 se alguma previsão não foi gerada (mensagem \"PROBLEMA - FALTAM ARQUIVOS EM <dir>\"), o que permite monitorar a rodada no cron da mesma forma que antes."));
 
-man.push(h1("9. Solução de problemas"));
+man.push(h1("10. Solução de problemas"));
 man.push(
   tabela(
     ["Sintoma", "Causa provável", "O que fazer"],
@@ -734,15 +820,15 @@ man.push(
 );
 man.push(p(""));
 
-man.push(h1("10. Testes de validação"));
+man.push(h1("11. Testes de validação"));
 man.push(p("Após instalar ou alterar qualquer coisa, rode:"));
-man.push(...codigo(["python3 teste_rf.py            # valida o núcleo do cálculo (rf_core)", "python3 teste_rf_previsto.py   # valida o script genérico de ponta a ponta", "python3 teste_rf_multifonte.py # valida o modo multifonte (Eta 13m, BESM 12h, JSON)", "python3 teste_prepara_gfs.py   # valida o preparo do GFS (idx, baldes, NetCDF)", "python3 teste_prepara_imerg.py # valida o preparo do IMERG (conversão, caminhos)", "python3 teste_prepara_era5.py  # valida o preparo da ERA5 (UR de T+Td, conversão)", "python3 teste_rf_observado.py  # valida o RF observado, as agregacoes e as figuras"]));
+man.push(...codigo(["python3 teste_rf.py            # valida o núcleo do cálculo (rf_core)", "python3 teste_rf_previsto.py   # valida o script genérico de ponta a ponta", "python3 teste_rf_multifonte.py # valida o modo multifonte (Eta 13m, BESM 12h, JSON)", "python3 teste_prepara_gfs.py   # valida o preparo do GFS (idx, baldes, NetCDF)", "python3 teste_prepara_imerg.py # valida o preparo do IMERG (conversão, caminhos)", "python3 teste_prepara_era5.py  # valida o preparo da ERA5 (UR de T+Td, conversão)", "python3 teste_rf_observado.py  # valida o RF observado, as agregacoes e as figuras", "python3 teste_fwi.py           # valida o motor FWI (referencia + xclim) e o FWI observado", "python3 teste_era5_horario.py  # valida o horario da ERA5 (fixo/solar) e a escala da UR"]));
 man.push(p("O primeiro teste cria dados sintéticos em /tmp/teste_rf, executa o cálculo completo e compara com uma implementação de referência fiel ao NCL; a saída esperada termina com \"TODOS OS TESTES PASSARAM\". O segundo monta uma árvore com a estrutura de diretórios da produção em /tmp/teste_generico e executa o rf_previsto.py real em cinco cenários (lista, intervalo, fallback do GFS, horizonte absoluto e falha controlada)."));
 
-man.push(h1("11. Segurança"));
+man.push(h1("12. Segurança"));
 man.push(p("O script semanal contém as credenciais do lftp (herdadas do shell script original) nas constantes LFTP_USUARIO e LFTP_SENHA. Recomenda-se movê-las para variáveis de ambiente ou para o arquivo ~/.netrc e restringir a permissão de leitura dos scripts."));
 
-man.push(h1("12. Suporte"));
+man.push(h1("13. Suporte"));
 man.push(p("Modelo: Alberto Setzer (alberto.setzer@inpe.br) · Código NCL original: Guilherme Martins (guilherme.martins@inpe.br) · Programa Queimadas: http://www.inpe.br/queimadas/"));
 
 // ---------------------------------------------------------------- gravação

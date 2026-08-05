@@ -23,6 +23,14 @@ os padrões da produção:
   fontes:    mesmas chaves do --config-fontes (rf_fontes.py): ajusta ou
              acrescenta fontes de previsão (gfs, eta, besm, ...).
 
+  era5:      horário das variáveis meteorológicas dos produtos observados
+             (RF e FWI observados) — ver era5_tempo.py:
+    horario:     "fixo" (uma hora UTC para todo o domínio) ou "solar"
+                 (hora solar local, montada por faixas de longitude)
+    hora:        hora UTC usada no modo fixo (padrão 18)
+    hora_local:  hora solar local usada no modo solar (padrão 15)
+    horas:       lista explícita de horas UTC a baixar/usar (opcional)
+
   execucao:  valores padrão da linha de comando (a CLI sempre prevalece):
              fonte, horizontes, de, ate, passo, data_final, rb_max,
              produto, jobs, fallback_gfs, sem_tif, fogograma.
@@ -70,9 +78,19 @@ CAMINHOS_PADRAO = {
 EXECUCAO_CHAVES = ("fonte", "horizontes", "de", "ate", "passo", "data_final",
                    "rb_max", "produto", "jobs", "fallback_gfs", "sem_tif",
                    "fogograma", "sem_vegetacao", "sem_topografia",
-                   "classe_veg", "media", "media_mensal", "maximo")
+                   "classe_veg", "media", "media_mensal", "maximo",
+                   "correcao_ur")
 
-SECOES_VALIDAS = {"base", "caminhos", "fontes", "execucao"}
+# Seção "era5": horário das variáveis meteorológicas dos produtos
+# observados (ver era5_tempo.py).
+ERA5_PADRAO = {
+    "horario": "fixo",     # "fixo" (uma hora UTC) | "solar" (hora local)
+    "hora": 18,            # hora UTC no modo fixo
+    "hora_local": 15,      # hora solar local no modo solar
+    "horas": None,         # lista explícita de horas UTC a baixar/usar
+}
+
+SECOES_VALIDAS = {"base", "caminhos", "fontes", "execucao", "era5"}
 
 
 def carrega(caminho):
@@ -107,6 +125,15 @@ def carrega(caminho):
             f"Válidas: {sorted(CAMINHOS_PADRAO)}.")
     caminhos.update(extras)
 
+    era5 = copy.deepcopy(ERA5_PADRAO)
+    extras_era5 = cfg.get("era5") or {}
+    invalidas = set(extras_era5) - set(ERA5_PADRAO)
+    if invalidas:
+        raise ValueError(
+            f"Chaves desconhecidas em 'era5': {sorted(invalidas)}. "
+            f"Válidas: {sorted(ERA5_PADRAO)}.")
+    era5.update(extras_era5)
+
     execucao = cfg.get("execucao") or {}
     invalidas = set(execucao) - set(EXECUCAO_CHAVES)
     if invalidas:
@@ -119,6 +146,7 @@ def carrega(caminho):
         "caminhos": caminhos,
         "fontes": cfg.get("fontes") or {},
         "execucao": execucao,
+        "era5": era5,
     }
 
 
@@ -129,6 +157,7 @@ def padrao():
         "caminhos": copy.deepcopy(CAMINHOS_PADRAO),
         "fontes": {},
         "execucao": {},
+        "era5": copy.deepcopy(ERA5_PADRAO),
     }
 
 
