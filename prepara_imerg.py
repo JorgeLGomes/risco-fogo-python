@@ -342,6 +342,23 @@ def main():
     print(f"Domínio:  lat [{dominio[0]}, {dominio[1]}], "
           f"lon [{dominio[2]}, {dominio[3]}]")
 
+    if not args.config and not args.base and base == rf_config.BASE_PADRAO:
+        print("AVISO: rodando com o diretório base PADRÃO da produção "
+              f"({rf_config.BASE_PADRAO}).\n"
+              "       Se este não é o destino desejado, use "
+              "--config config.yaml (ou --base DIR).", file=sys.stderr)
+
+    # Falha cedo se o destino não for gravável (antes de baixar qualquer
+    # coisa) — evita descobrir o problema só no fim do primeiro download.
+    if faltam and not args.simular:
+        destino_teste = rf_config.caminho_imerg(base, caminhos, faltam[0])
+        try:
+            os.makedirs(os.path.dirname(destino_teste), exist_ok=True)
+        except OSError as exc:
+            sys.exit(f"Erro: não consigo criar o diretório de destino "
+                     f"({exc}).\nConfira o caminho acima — provavelmente "
+                     f"falta --config config.yaml (ou --base).")
+
     if args.simular:
         for d in faltam[:3] + (["..."] if len(faltam) > 5 else []) + faltam[-2:]:
             if d == "...":
@@ -359,28 +376,35 @@ def main():
     t0 = time.time()
     erros = []
 
+    print(f"Baixando com {args.jobs} conexão(ões) — cada dia transfere "
+          f"~25 MB do arquivo global e grava ~2–3 MB recortados...",
+          flush=True)
+
     def processa(d):
         bruto, url = baixa_dia(opener, args.produto, d)     # rede: paralelo
         with _LOCK_NETCDF:                                   # HDF5: serializado
             prec, la, lo = converte(bruto, dominio, d)
             destino = rf_config.caminho_imerg(base, caminhos, d)
             grava_padrao(destino, prec, la, lo, d, url, args.sobrescrever)
-        return d
+        return len(bruto) if hasattr(bruto, "__len__") else 0
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as ex:
         futuros = {ex.submit(processa, d): d for d in faltam}
         feitos = 0
         for fut in concurrent.futures.as_completed(futuros):
             d = futuros[fut]
+            feitos += 1
+            decorrido = time.time() - t0
+            resta = decorrido / feitos * (len(faltam) - feitos)
             try:
-                fut.result()
+                nbytes = fut.result()
+                print(f"  OK   {d:%Y-%m-%d}  ({feitos}/{len(faltam)}, "
+                      f"{nbytes/1e6:.0f} MB, {decorrido:.0f}s decorridos, "
+                      f"restam ~{resta/60:.0f} min)", flush=True)
             except Exception as exc:  # noqa: BLE001
                 erros.append((d, str(exc)))
-                print(f"  ERRO {d:%Y-%m-%d}: {exc}", file=sys.stderr)
-            feitos += 1
-            if feitos % 10 == 0 or feitos == len(faltam):
-                print(f"  {feitos}/{len(faltam)} dias "
-                      f"({time.time()-t0:.0f}s)")
+                print(f"  ERRO {d:%Y-%m-%d}  ({feitos}/{len(faltam)}): "
+                      f"{exc}", file=sys.stderr, flush=True)
 
     ok = len(faltam) - len(erros)
     print(f"\nConcluído em {time.time()-t0:.0f}s: {ok} dias gravados"

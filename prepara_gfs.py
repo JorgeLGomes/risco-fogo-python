@@ -408,6 +408,19 @@ def main():
     print(f"Domínio: lat [{dominio[0]}, {dominio[1]}], "
           f"lon [{dominio[2]}, {dominio[3]}] | acúmulo: {args.acumulo}")
 
+    if not args.config and not args.base and base == rf_config.BASE_PADRAO:
+        print("AVISO: rodando com o diretório base PADRÃO da produção "
+              f"({rf_config.BASE_PADRAO}).\n"
+              "       Se este não é o destino desejado, use "
+              "--config config.yaml (ou --base DIR).", file=sys.stderr)
+    if not args.simular:
+        try:
+            os.makedirs(dirout, exist_ok=True)
+        except OSError as exc:
+            sys.exit(f"Erro: não consigo criar o diretório de saída "
+                     f"({exc}).\nConfira o caminho acima — provavelmente "
+                     f"falta --config config.yaml (ou --base).")
+
     if args.simular:
         exemplo = {"s3": URL_S3, "nomads": URL_NOMADS_PUB,
                    "filtro": URL_FILTRO}[args.metodo]

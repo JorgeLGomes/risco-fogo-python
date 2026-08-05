@@ -351,6 +351,20 @@ def main():
           f"lon [{dominio[2]}, {dominio[3]}]")
     print(f"Destino: {rf_config.resolve(base, caminhos['era5_dir'])}")
 
+    if not args.config and not args.base and base == rf_config.BASE_PADRAO:
+        print("AVISO: rodando com o diretório base PADRÃO da produção "
+              f"({rf_config.BASE_PADRAO}).\n"
+              "       Se este não é o destino desejado, use "
+              "--config config.yaml (ou --base DIR).", file=sys.stderr)
+    if pendentes and not args.simular:
+        try:
+            os.makedirs(rf_config.resolve(base, caminhos["era5_dir"]),
+                        exist_ok=True)
+        except OSError as exc:
+            sys.exit(f"Erro: não consigo criar o diretório de destino "
+                     f"({exc}).\nConfira o caminho acima — provavelmente "
+                     f"falta --config config.yaml (ou --base).")
+
     if not pendentes:
         print("Nada a fazer.")
         return
