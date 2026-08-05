@@ -2,7 +2,7 @@
 
 ## Risco de Fogo Previsto em Python — INPE_FireRiskModel v2.2
 
-**Versão:** 1.4 · 5 de agosto de 2026
+**Versão:** 1.5 · 5 de agosto de 2026
 **Substitui:** `rf_previsto_1-5dias_2023.sh` e `rf_previsto_1-2_semanas_2024.sh` (bash + NCL)
 
 ---
@@ -59,10 +59,12 @@ rf_previsto_1_5dias.py
 rf_previsto_1_2_semanas.py
 rf_previsto.py
 prepara_gfs.py
+prepara_imerg.py
 teste_rf.py
 teste_rf_previsto.py
 teste_rf_multifonte.py
 teste_prepara_gfs.py
+teste_prepara_imerg.py
 ```
 
 Os scripts devem ficar no mesmo diretório (os orquestradores fazem `import rf_core`). Se desejar, torne-os executáveis:
@@ -228,7 +230,17 @@ python3 rf_previsto.py --config config.yaml --horizontes 6m   # CLI prevalece
 
 O arquivo `config_exemplo.yaml` traz o modelo completo comentado; as seções são validadas na leitura (chave desconhecida gera erro com a lista das válidas). Requer PyYAML (`pip install pyyaml`) — arquivos `.json` funcionam sem ele.
 
-## 6. Preparo dos dados de entrada do GFS (prepara_gfs.py)
+## 6. Preparo dos dados de entrada (prepara_gfs.py e prepara_imerg.py)
+
+Dois scripts geram o banco de dados de entrada do RF sem depender da área de produção do Programa Queimadas: o `prepara_gfs.py` (previsões) e o `prepara_imerg.py` (precipitação observada). Com eles, o fluxo completo de uma rodada é:
+
+```bash
+python3 prepara_imerg.py --config config.yaml         # 1. IMERG observado (119 dias)
+python3 prepara_gfs.py   --config config.yaml         # 2. previsões do GFS
+python3 rf_previsto.py   --de 6h --ate 4d18h --passo 6h   # 3. RF
+```
+
+### 6.1 GFS (prepara_gfs.py)
 
 O `prepara_gfs.py` baixa a previsão do GFS 0,25° da NOAA e grava os arquivos `GFS.PREV.PREC.*` (prec em mm/dia) e `GFS.PREV.TEMP2m.RH2m.*` (T2m em K, UR2m em %) na convenção da seção 2.2, prontos para o `rf_previsto.py`. Requer o pygrib (`python3 -m pip install pygrib`).
 
@@ -249,12 +261,29 @@ python3 prepara_gfs.py --metodo nomads          # se a AWS estiver bloqueada
 
 Opções principais: `--data`/`--rodada` (rodada), `--dias` (alcance, padrão 16), `--passo` (validades, padrão 6 h), `--dominio latS,latN,lonW,lonE`, `--acumulo 24h|dia`, `--jobs` (downloads simultâneos), `--base`/`--config` (destino), `--sobrescrever` e `--simular`.
 
-Sobre a precipitação: o APCP do GFS vem em "baldes" (6 h até +240 h; 12 h de +240 h a +384 h). O acumulado diário de cada validade soma os baldes que cobrem as 24 h anteriores, com o intervalo lido do próprio GRIB — a transição 6 h/12 h é automática, e validades sem arquivo além de +240 h (fora do passo de 12 h) são puladas com aviso. Fluxo típico de uma rodada:
+Sobre a precipitação: o APCP do GFS vem em "baldes" (6 h até +240 h; 12 h de +240 h a +384 h). O acumulado diário de cada validade soma os baldes que cobrem as 24 h anteriores, com o intervalo lido do próprio GRIB — a transição 6 h/12 h é automática, e validades sem arquivo além de +240 h (fora do passo de 12 h) são puladas com aviso.
+
+### 6.2 IMERG (prepara_imerg.py)
+
+O `prepara_imerg.py` baixa a precipitação diária observada do IMERG — produto **GPM_3IMERGDE V07** (Early Daily, ~4 h de latência, o mesmo da operação) — do GES DISC/NASA e converte para o padrão de leitura do pipeline (`INPE_FireRiskModel_2.2_Precipitation_AAAAMMDD.nc`, variável `prec` em mm/dia, lat sul→norte, domínio recortado), no destino definido pela seção `caminhos` do `config.yaml`.
+
+**Pré-requisito (uma única vez):** conta gratuita no Earthdata (https://urs.earthdata.nasa.gov), autorizar o app **"NASA GESDISC DATA ARCHIVE"** em *Applications → Authorized Apps* e criar o `~/.netrc` (com `chmod 600`):
+
+```
+machine urs.earthdata.nasa.gov login SEU_USUARIO password SUA_SENHA
+```
+
+Modos de uso:
 
 ```bash
-python3 prepara_gfs.py --config config.yaml           # 1. baixa e prepara o GFS
-python3 rf_previsto.py --de 6h --ate 4d18h --passo 6h # 2. calcula o RF
+python3 prepara_imerg.py                           # data corrente: 119 dias até ontem
+python3 prepara_imerg.py --data-final 20260804     # janela da rodada (reprocessamento)
+python3 prepara_imerg.py --inicio 20250101 --fim 20251231   # período explícito
+python3 prepara_imerg.py --produto final ...       # histórico consolidado da NASA
+python3 prepara_imerg.py --simular                 # confere período e URLs
 ```
+
+O script pula dias já existentes (rodar de novo completa o que faltou; `--sobrescrever` regrava), tenta as letras de versão da NASA automaticamente (V07D→V07A), baixa em paralelo (`--jobs`) e trata a transposição lon/lat e os valores inválidos do formato IMERG. Cada dia baixa ~25 MB do arquivo global e grava ~2–3 MB recortados. Produtos: `early` (padrão), `late` (~14 h) e `final` (pesquisa, meses de latência — ideal para períodos históricos).
 
 ## 7. Saídas
 
@@ -312,6 +341,7 @@ python3 teste_rf.py            # valida o núcleo do cálculo (rf_core)
 python3 teste_rf_previsto.py   # valida o script genérico de ponta a ponta
 python3 teste_rf_multifonte.py # valida o modo multifonte (Eta 13m, BESM 12h, JSON)
 python3 teste_prepara_gfs.py   # valida o preparo do GFS (idx, baldes, NetCDF)
+python3 teste_prepara_imerg.py # valida o preparo do IMERG (conversão, caminhos)
 ```
 
 O primeiro teste cria dados sintéticos em `/tmp/teste_rf`, executa o cálculo completo e compara com uma implementação de referência fiel ao NCL; a saída esperada termina com `TODOS OS TESTES PASSARAM`. O segundo monta uma árvore com a estrutura de diretórios da produção em `/tmp/teste_generico` e executa o `rf_previsto.py` real em cinco cenários (lista, intervalo, fallback do GFS, horizonte absoluto e falha controlada).

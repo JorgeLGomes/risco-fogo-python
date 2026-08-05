@@ -22,11 +22,13 @@ risco-fogo-python/
 ├── rf_previsto_1_2_semanas.py  # Produto semanal (7 e 14 dias)
 ├── rf_previsto.py              # Script genérico (qualquer horizonte/fonte)
 ├── prepara_gfs.py              # Download/preparo do GFS (pós-SCN 25-81)
+├── prepara_imerg.py            # Download/conversão do IMERG (GES DISC)
 ├── teste_rf.py                 # Teste do núcleo
 ├── teste_rf_previsto.py        # Teste do script genérico
 ├── teste_rf_multifonte.py      # Teste do modo multifonte
 ├── teste_besm_real.py          # Teste com dados reais do BESM T062
 ├── teste_prepara_gfs.py        # Teste do preparo do GFS
+├── teste_prepara_imerg.py      # Teste do preparo do IMERG
 ├── requirements.txt            # Dependências Python
 ├── README.md
 ├── .gitignore                  # Ignora __pycache__, *.nc, *.tif e logs
@@ -105,6 +107,7 @@ Histórico de versões do projeto:
 | `v1.1.0` | Script genérico de horizontes (`rf_previsto.py`) + documentação v1.1 |
 | `v1.2.0` | Multifonte (GFS/Eta/BESM até 13 meses, acúmulos 1h/12h/1d) + documentação v1.2 |
 | `v1.3.0` | Config YAML (--config), prepara_gfs.py (pós-SCN 25-81) e documentação v1.4 |
+| — | Commit seguinte: prepara_imerg.py (banco IMERG via GES DISC) e manual v1.5 |
 
 No GitHub, cada tag pode virar um "Release": página do repositório →
 *Releases* → *Draft a new release* → escolha a tag, descreva e publique.

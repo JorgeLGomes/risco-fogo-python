@@ -14,6 +14,7 @@ rf_previsto.py                # Script genérico: qualquer horizonte e fonte (GF
 rf_fontes.py                  # Camada de fontes: config por fonte, agregação 1h/12h/1d, série IMERG+previsão
 rf_config.py                  # Configuração YAML dos dados de entrada (--config)
 prepara_gfs.py                # Download do GFS (fast download .idx / grib filter — pós-SCN 25-81)
+prepara_imerg.py              # Download/conversão do IMERG Early Daily V07 (GES DISC, Earthdata)
 teste_rf.py                   # Teste de validação (dados sintéticos + referência fiel ao NCL)
 teste_rf_previsto.py          # Teste de ponta a ponta do script genérico
 teste_rf_multifonte.py        # Teste do modo multifonte (Eta 13m, BESM 12h, fonte via JSON)
@@ -45,7 +46,8 @@ python3 rf_previsto.py --de 6h --ate 4d18h --passo 6h
 python3 rf_previsto.py --fonte eta --de 1m --ate 13m --passo 1m
 python3 rf_previsto.py --fonte besm --horizontes 6m
 
-# Preparo das entradas do GFS + configuração via YAML
+# Preparo das entradas (IMERG observado + GFS previsto) + RF
+python3 prepara_imerg.py --config config.yaml
 python3 prepara_gfs.py --config config.yaml
 python3 rf_previsto.py --config config.yaml
 ```
