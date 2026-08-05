@@ -18,6 +18,7 @@ risco-fogo-python/
 ├── rf_fontes.py                # Camada de fontes (GFS, Eta, BESM)
 ├── rf_config.py                # Configuração YAML dos dados de entrada
 ├── config_exemplo.yaml         # Modelo comentado do config
+├── ativa_riscofogo.sh          # Ativação do ambiente no cluster (source)
 ├── rf_previsto_1_5dias.py      # Produto diário (1–5 dias)
 ├── rf_previsto_1_2_semanas.py  # Produto semanal (7 e 14 dias)
 ├── rf_previsto.py              # Script genérico (qualquer horizonte/fonte)
@@ -112,34 +113,30 @@ Histórico de versões do projeto:
 No GitHub, cada tag pode virar um "Release": página do repositório →
 *Releases* → *Draft a new release* → escolha a tag, descreva e publique.
 
-## 5. Commits pendentes desta atualização (v1.3)
+## 5. Commits pendentes desta atualização
 
 Todos os arquivos já estão no repositório local (gravados diretamente).
-Confira, teste e envie:
+Se os commits anteriores (v1.3.0/prepara_imerg) ainda não foram enviados,
+tudo sobe junto no mesmo push:
 
 ```powershell
 cd C:\Users\jorge\Claude\Projects\risco-fogo-python
 
-git status                        # confira os arquivos novos/alterados
-python teste_rf.py
-python teste_rf_previsto.py
-python teste_rf_multifonte.py
-python teste_prepara_gfs.py
-
+git status
 git add -A
-git commit -m "Atualiza para v1.3: generico, multifonte, config YAML e prepara_gfs
+git commit -m "Corrige autenticacao/threads dos preparos e adiciona ativa_riscofogo.sh
 
-- rf_previsto.py: qualquer horizonte (h/d/meses) e fonte (--fonte gfs|eta|besm)
-- rf_fontes.py: camada de fontes, layouts por_tempo/serie, BESM T062 real
-- rf_config.py + config_exemplo.yaml: entradas configuraveis via YAML (--config)
-- prepara_gfs.py: download do GFS pos-SCN 25-81 (fast download .idx na AWS/
-  NOMADS ou grib filter); pygrib no requirements
-- rf_core.py: calcula_risco_fogo_dados (arrays) para o modo multifonte
-- 4 suites de teste novas; manual v1.4 e estas instrucoes atualizadas"
+- prepara_imerg: token Earthdata (Bearer, ~/.edl_token) como modo recomendado
+  e diagnostico claro da falha de login (HTML/401)
+- prepara_imerg e prepara_gfs: conversao NetCDF/GRIB serializada por lock
+  (HDF5/eccodes nao sao thread-safe) — corrige Segmentation fault em lote
+- ativa_riscofogo.sh: module load + conda env por nome/caminho, deteccao de
+  env sem Python com fallback para o venv e sanidade das bibliotecas
+- Manual v1.6: secao 3.1 (ambiente no cluster), 6.2 (token) e novos itens
+  de solucao de problemas"
 
-git tag -a v1.3.0 -m "Multifonte + config YAML + prepara_gfs"
 git push origin main
-git push origin v1.3.0
+git push origin v1.3.0     # se a tag ainda nao subiu
 ```
 
 E no servidor (ian01): `git pull`.

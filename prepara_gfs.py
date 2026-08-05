@@ -57,10 +57,15 @@ import os
 import re
 import sys
 import tempfile
+import threading
 import time
 import urllib.request
 
 import numpy as np
+
+# eccodes (pygrib) e HDF5 (netCDF4) não são thread-safe: os downloads rodam
+# em paralelo, mas a decodificação GRIB é serializada por este lock.
+_LOCK_DECODE = threading.Lock()
 
 DOMINIO_PADRAO = "-60.05,29.95,-114.95,-30.05"   # latS,latN,lonW,lonE
 
@@ -429,7 +434,8 @@ def main():
 
     def processa(fhora):
         bruto = baixa_fhora(args.metodo, data, args.rodada, fhora, dominio)
-        return fhora, decodifica_grib(bruto, dominio)
+        with _LOCK_DECODE:
+            return fhora, decodifica_grib(bruto, dominio)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as ex:
         futuros = [ex.submit(processa, h) for h in fhoras]

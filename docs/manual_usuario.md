@@ -2,7 +2,7 @@
 
 ## Risco de Fogo Previsto em Python — INPE_FireRiskModel v2.2
 
-**Versão:** 1.5 · 5 de agosto de 2026
+**Versão:** 1.6 · 5 de agosto de 2026
 **Substitui:** `rf_previsto_1-5dias_2023.sh` e `rf_previsto_1-2_semanas_2024.sh` (bash + NCL)
 
 ---
@@ -55,6 +55,7 @@ rf_core.py
 rf_fontes.py
 rf_config.py
 config_exemplo.yaml
+ativa_riscofogo.sh
 rf_previsto_1_5dias.py
 rf_previsto_1_2_semanas.py
 rf_previsto.py
@@ -72,6 +73,16 @@ Os scripts devem ficar no mesmo diretório (os orquestradores fazem `import rf_c
 ```bash
 chmod +x rf_previsto_1_5dias.py rf_previsto_1_2_semanas.py
 ```
+
+### 3.1 Ambiente Python no cluster (ativa_riscofogo.sh)
+
+Em clusters, o erro mais comum é instalar/rodar com interpretadores diferentes (o `pip` do sistema instala num lugar, o `python3` do ambiente lê de outro). O `ativa_riscofogo.sh` resolve isso — use **sempre com `source`**, a cada login (ou adicione ao `~/.bashrc`):
+
+```bash
+source ativa_riscofogo.sh
+```
+
+Ele carrega o módulo Anaconda do sistema (se existir; nome ajustável em `MODULO_ANACONDA`), ativa o env conda `riscofogo` — localizado por nome **ou** por caminho (envs fora do diretório padrão aparecem sem nome no `conda env list`) —, detecta env conda **sem Python próprio** (caindo para o venv `~/envs/riscofogo` e imprimindo o `conda install -p ...` para populá-lo), e confere versão e bibliotecas ao final, dizendo o que falta e como instalar. Regra de ouro dentro de qualquer ambiente: instale com `python3 -m pip install ...`, nunca com `pip` solto.
 
 ## 4. Uso
 
@@ -267,11 +278,16 @@ Sobre a precipitação: o APCP do GFS vem em "baldes" (6 h até +240 h; 12 h de 
 
 O `prepara_imerg.py` baixa a precipitação diária observada do IMERG — produto **GPM_3IMERGDE V07** (Early Daily, ~4 h de latência, o mesmo da operação) — do GES DISC/NASA e converte para o padrão de leitura do pipeline (`INPE_FireRiskModel_2.2_Precipitation_AAAAMMDD.nc`, variável `prec` em mm/dia, lat sul→norte, domínio recortado), no destino definido pela seção `caminhos` do `config.yaml`.
 
-**Pré-requisito (uma única vez):** conta gratuita no Earthdata (https://urs.earthdata.nasa.gov), autorizar o app **"NASA GESDISC DATA ARCHIVE"** em *Applications → Authorized Apps* e criar o `~/.netrc` (com `chmod 600`):
+**Pré-requisito (uma única vez):** conta gratuita no Earthdata (https://urs.earthdata.nasa.gov) e um dos dois modos de autenticação:
+
+- **Modo A — token (recomendado):** no perfil do Earthdata, aba *Generate Token*, copie o token e salve no servidor: `echo 'SEU_TOKEN' > ~/.edl_token && chmod 600 ~/.edl_token` (ou exporte `EARTHDATA_TOKEN`). Dispensa autorização de app e senha no disco.
+- **Modo B — usuário/senha:** autorize o app **"NASA GESDISC DATA ARCHIVE"** em *Applications → Authorized Apps* (obrigatório) e crie o `~/.netrc` (com `chmod 600`; o login é o **nome de usuário**, não o e-mail):
 
 ```
 machine urs.earthdata.nasa.gov login SEU_USUARIO password SUA_SENHA
 ```
+
+Se a autenticação falhar, o script diz o motivo (página de LOGIN = usuário/senha errados; pedido de AUTORIZAÇÃO = app não aprovado; 401 = token inválido/expirado).
 
 Modos de uso:
 
@@ -330,7 +346,10 @@ O código de saída é 0 em caso de sucesso e 1 se alguma previsão não foi ger
 | `A topografia (...) não tem a mesma grade do mapa de vegetação (...)` | Arquivo de topografia ou vegetação trocado | Confira os arquivos em `data/input/` |
 | Consumo excessivo de memória / máquina lenta | Muitos processos simultâneos em grade de 1 km | Reduza `--jobs` |
 | Falha no envio (lftp/scp) | Rede ou credenciais | O cálculo não é afetado; reenvie manualmente ou rode novamente com envio |
-| `ModuleNotFoundError: rasterio` (ou outra biblioteca) | Dependências não instaladas no Python usado | `pip install numpy xarray netCDF4 rasterio` |
+| `ModuleNotFoundError: rasterio` (ou outra biblioteca) | Dependências não instaladas no Python usado | `source ativa_riscofogo.sh` e instale com `python3 -m pip install ...` (nunca `pip` solto) |
+| `prepara_imerg`: erro "resposta HTML" do Earthdata | Autenticação incompleta (app não autorizado, login=e-mail ou token expirado) | A mensagem de erro indica o caso; prefira o token (`~/.edl_token`) — seção 6.2 |
+| `Segmentation fault` em `prepara_imerg`/`prepara_gfs` | Versão antiga dos scripts (conversão HDF5/GRIB em threads simultâneas) | Atualize: as versões atuais serializam a conversão com lock (download segue paralelo) |
+| `python3` continua sendo o 3.6 do sistema após ativar o conda | Env conda sem Python próprio (env "vazio") | `conda install -p <caminho_do_env> -c conda-forge python=3.12 ...` ou use o venv (o `ativa_riscofogo.sh` faz esse desvio sozinho) |
 
 ## 10. Testes de validação
 

@@ -20,6 +20,7 @@ teste_rf_previsto.py          # Teste de ponta a ponta do script genérico
 teste_rf_multifonte.py        # Teste do modo multifonte (Eta 13m, BESM 12h, fonte via JSON)
 teste_prepara_gfs.py          # Teste do preparo do GFS (idx, baldes 6h/12h)
 config_exemplo.yaml           # Modelo comentado do arquivo de configuração
+ativa_riscofogo.sh            # Ativação do ambiente no cluster (use com source)
 requirements.txt              # Dependências Python
 docs/                         # Relatório de conversão e manual do usuário (md, docx, pdf)
 originais/                    # Scripts bash+NCL originais, mantidos para referência

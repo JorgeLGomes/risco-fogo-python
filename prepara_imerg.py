@@ -15,12 +15,21 @@ o mesmo usado pela operação do Programa Queimadas (latência ~4 h). Com
 --produto final, usa o Final Run (GPM_3IMERGDF, mais preciso, latência de
 meses — útil para reprocessamentos históricos).
 
-AUTENTICAÇÃO (uma única vez):
-  1. Crie uma conta gratuita em https://urs.earthdata.nasa.gov
-  2. No perfil, em "Applications > Authorized Apps", autorize
-     "NASA GESDISC DATA ARCHIVE"
-  3. Crie o arquivo ~/.netrc (chmod 600) com:
-       machine urs.earthdata.nasa.gov login SEU_USUARIO password SUA_SENHA
+AUTENTICAÇÃO (uma única vez) — dois modos, o token é o mais robusto:
+
+  MODO A (recomendado) — token do Earthdata:
+    1. Conta gratuita em https://urs.earthdata.nasa.gov
+    2. No perfil, aba "Generate Token" -> copie o token
+    3. No servidor:  echo 'SEU_TOKEN' > ~/.edl_token && chmod 600 ~/.edl_token
+       (ou exporte a variável EARTHDATA_TOKEN)
+
+  MODO B — usuário/senha via ~/.netrc:
+    1. Conta gratuita em https://urs.earthdata.nasa.gov
+    2. No perfil, em "Applications > Authorized Apps", autorize
+       "NASA GESDISC DATA ARCHIVE"  (OBRIGATÓRIO neste modo)
+    3. Crie o arquivo ~/.netrc (chmod 600) com:
+         machine urs.earthdata.nasa.gov login SEU_USUARIO password SUA_SENHA
+       (login = nome de usuário do Earthdata, NÃO o e-mail)
 
 Exemplos:
 
@@ -48,10 +57,16 @@ import netrc
 import os
 import sys
 import tempfile
+import threading
 import time
 import urllib.request
 
 import numpy as np
+
+# A HDF5 (por trás do netCDF4/xarray) NÃO é thread-safe: o download roda em
+# paralelo, mas a conversão/gravação NetCDF é serializada por este lock
+# (sem ele, lotes grandes morrem com "Segmentation fault").
+_LOCK_NETCDF = threading.Lock()
 
 DOMINIO_PADRAO = "-60.05,29.95,-114.95,-30.05"   # latS,latN,lonW,lonE
 
@@ -78,9 +93,28 @@ TENTATIVAS = 3
 # Autenticação Earthdata (via ~/.netrc) com cookies e redirecionamentos
 # ---------------------------------------------------------------------------
 
+_TOKEN = None
+
+
 def monta_opener():
-    """urllib opener com autenticação básica no urs.earthdata.nasa.gov e
-    cookies (o GES DISC redireciona para o URS na primeira requisição)."""
+    """urllib opener autenticado no Earthdata.
+
+    Preferência: token (variável EARTHDATA_TOKEN ou arquivo ~/.edl_token),
+    enviado como 'Authorization: Bearer'. Sem token, usa usuário/senha do
+    ~/.netrc com autenticação básica + cookies (exige o app
+    'NASA GESDISC DATA ARCHIVE' autorizado no perfil)."""
+    global _TOKEN
+    _TOKEN = os.environ.get("EARTHDATA_TOKEN")
+    if not _TOKEN:
+        caminho = os.path.expanduser("~/.edl_token")
+        if os.path.exists(caminho):
+            with open(caminho) as f:
+                _TOKEN = f.read().strip()
+    if _TOKEN:
+        print("Autenticação: token Earthdata (Bearer).")
+        return urllib.request.build_opener(
+            urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+
     gerente = urllib.request.HTTPPasswordMgrWithDefaultRealm()
     try:
         credenciais = netrc.netrc()
@@ -89,11 +123,13 @@ def monta_opener():
         auth = None
     if auth is None:
         sys.exit("Erro: credenciais Earthdata não encontradas.\n"
-                 "Crie ~/.netrc (chmod 600) com:\n"
-                 "  machine urs.earthdata.nasa.gov login USUARIO password SENHA\n"
-                 "Conta gratuita em https://urs.earthdata.nasa.gov "
-                 "(autorize o app 'NASA GESDISC DATA ARCHIVE').")
+                 "Opção A (recomendada): gere um token no perfil do "
+                 "Earthdata ('Generate Token') e salve com:\n"
+                 "  echo 'SEU_TOKEN' > ~/.edl_token && chmod 600 ~/.edl_token\n"
+                 "Opção B: crie ~/.netrc (chmod 600) com:\n"
+                 "  machine urs.earthdata.nasa.gov login USUARIO password SENHA")
     usuario, _, senha = auth
+    print(f"Autenticação: usuário/senha do ~/.netrc (login: {usuario}).")
     gerente.add_password(None, "https://urs.earthdata.nasa.gov",
                          usuario, senha)
     return urllib.request.build_opener(
@@ -101,19 +137,40 @@ def monta_opener():
         urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
 
 
+def _diagnostico_html(dados):
+    """Explica a página HTML devolvida no lugar do dado."""
+    trecho = dados[:4000].decode("utf-8", "ignore").lower()
+    if "authorize" in trecho or "approve" in trecho:
+        return ("o Earthdata pediu AUTORIZAÇÃO do aplicativo: entre no seu "
+                "perfil em urs.earthdata.nasa.gov > Applications > "
+                "Authorized Apps e aprove 'NASA GESDISC DATA ARCHIVE'")
+    if "login" in trecho or "password" in trecho or "sign in" in trecho:
+        return ("o Earthdata devolveu a página de LOGIN: usuário/senha do "
+                "~/.netrc incorretos (o login é o nome de usuário, não o "
+                "e-mail) — ou use um token (~/.edl_token)")
+    return "resposta HTML inesperada (veja as opções de autenticação no cabeçalho do script)"
+
+
 def baixa(opener, url, timeout=180):
     ultimo = None
     for tentativa in range(1, TENTATIVAS + 1):
         try:
-            with opener.open(url, timeout=timeout) as r:
+            req = urllib.request.Request(url)
+            req.add_header("User-Agent", "prepara_imerg/1.1 (INPE)")
+            if _TOKEN:
+                req.add_header("Authorization", "Bearer " + _TOKEN)
+            with opener.open(req, timeout=timeout) as r:
                 dados = r.read()
             if dados[:6].lower() in (b"<html>", b"<!doct"):
-                raise RuntimeError("resposta HTML (login falhou? autorize o "
-                                   "app GESDISC no Earthdata)")
+                raise RuntimeError(_diagnostico_html(dados))
             return dados
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
                 raise                       # versão errada: deixa o chamador tentar outra
+            if exc.code == 401:
+                raise RuntimeError(
+                    "401 não autorizado: token inválido/expirado ou "
+                    "usuário/senha incorretos no ~/.netrc") from exc
             ultimo = exc
         except Exception as exc:  # noqa: BLE001
             ultimo = exc
@@ -303,10 +360,11 @@ def main():
     erros = []
 
     def processa(d):
-        bruto, url = baixa_dia(opener, args.produto, d)
-        prec, la, lo = converte(bruto, dominio, d)
-        destino = rf_config.caminho_imerg(base, caminhos, d)
-        grava_padrao(destino, prec, la, lo, d, url, args.sobrescrever)
+        bruto, url = baixa_dia(opener, args.produto, d)     # rede: paralelo
+        with _LOCK_NETCDF:                                   # HDF5: serializado
+            prec, la, lo = converte(bruto, dominio, d)
+            destino = rf_config.caminho_imerg(base, caminhos, d)
+            grava_padrao(destino, prec, la, lo, d, url, args.sobrescrever)
         return d
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as ex:
