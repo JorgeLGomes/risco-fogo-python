@@ -2,7 +2,7 @@
 
 ## Risco de Fogo Previsto em Python — INPE_FireRiskModel v2.2
 
-**Versão:** 1.7 · 5 de agosto de 2026
+**Versão:** 1.8 · 5 de agosto de 2026
 **Substitui:** `rf_previsto_1-5dias_2023.sh` e `rf_previsto_1-2_semanas_2024.sh` (bash + NCL)
 
 ---
@@ -164,10 +164,10 @@ python3 rf_previsto.py --fonte besm --horizontes 6m
 | `--fallback-gfs` | Se o GFS do horário exato não existir, usa o horário anterior do mesmo dia (generaliza a cópia 12 UTC → 18 UTC do produto semanal) | desativado |
 | `--sem-tif` | Gera apenas os NetCDF, sem GeoTIFF | TIF ativado |
 | `--fogograma` | Gera também um único NetCDF com todos os horizontes | desativado |
-| `--sem-vegetacao` | Sensibilidade: desliga o efeito da vegetação (classe uniforme `--classe-veg` em toda a terra; água preservada); produto ganha sufixo `_SEMVEG` | desativado |
+| `--sem-vegetacao` | Sensibilidade: desliga o efeito da vegetação; o mapa **não é lido** (classe uniforme `--classe-veg`, saída na grade da precipitação, sem máscara d'água); produto ganha sufixo `_SEMVEG` | desativado |
 | `--sem-topografia` | Sensibilidade: desliga o Fator Topográfico (FTOP=1; o arquivo de topografia nem é lido); produto ganha sufixo `_SEMTOPO` | desativado |
 | `--classe-veg N` | Classe usada com `--sem-vegetacao` | 4 (A=2,4; PSE_max=75) |
-| `--data-final YYYYMMDD` / `--jobs N` | Como nos demais scripts | hoje / 4 |
+| `--data-final YYYYMMDD` / `--jobs N` | Como nos demais scripts; aceita também `hoje` (= data do sistema, útil no YAML) | hoje / 4 |
 
 As saídas seguem o mesmo formato dos demais produtos (`RF.PREV.YYYYMMDDHH.nc` e `.tif`), gravadas em `data/output/2.2/<produto>/netcdf|tif/<modelo>/`. O script genérico não gera links D1–D5, cópias T7/T14 nem faz envio a servidores — para os produtos operacionais, use os scripts dedicados.
 
@@ -220,7 +220,7 @@ O `--config arquivo.yaml` centraliza toda a configuração dos dados de entrada 
 | `base` | Diretório base do modelo; os caminhos relativos são ancorados nele |
 | `caminhos` | Onde estão os dados de entrada: `imerg_dir`, `imerg_subpastas` (`{ano}/{mes}`), `imerg_padrao` (`{data}`), `mapa_vegetacao` (`{ano_veg}`), `topografia`, `log` |
 | `fontes` | Mesmas chaves do `--config-fontes`: ajusta ou acrescenta fontes (gfs, eta, besm, ...) |
-| `execucao` | Padrões da linha de comando: `fonte`, `horizontes` ou `de`/`ate`/`passo`, `data_final`, `rb_max`, `produto`, `jobs`, `fallback_gfs`, `sem_tif`, `fogograma` |
+| `execucao` | Padrões da linha de comando: `fonte`, `horizontes` ou `de`/`ate`/`passo`, `data_final`, `rb_max`, `produto`, `jobs`, `fallback_gfs`, `sem_tif`, `fogograma`, `sem_vegetacao`, `sem_topografia`, `classe_veg` |
 
 ```yaml
 base: /home/queimadas/INPE_FireRiskModel
@@ -234,13 +234,19 @@ execucao:
   de: 1m
   ate: 13m
   passo: 1m
+  data_final: hoje       # data do sistema (também: auto, sistema) — ou "20260804"
   produto: RF_PREV_BESM
+  sem_vegetacao: false   # sensibilidade (seção 5.6): true dispensa o mapa
+  sem_topografia: false  # true dispensa a topografia (FTOP = 1)
+  classe_veg: 4
 ```
 
 ```bash
 python3 rf_previsto.py --config config.yaml               # tudo do arquivo
 python3 rf_previsto.py --config config.yaml --horizontes 6m   # CLI prevalece
 ```
+
+Com `data_final: hoje` (equivalente a omitir a chave) e `horizontes` (ou `de`/`ate`/`passo`) declarados no arquivo, o YAML define uma **rodada diária operacional**: cada execução de `python3 rf_previsto.py --config config.yaml` usa a data corrente do sistema e produz sempre os mesmos horizontes pré-estabelecidos — ideal para agendar no cron. As chaves de sensibilidade permitem manter arquivos separados por experimento (ex.: `config.yaml` de referência e `config_semveg.yaml` com `sem_vegetacao: true`), sem alterar a linha de comando.
 
 O arquivo `config_exemplo.yaml` traz o modelo completo comentado; as seções são validadas na leitura (chave desconhecida gera erro com a lista das válidas). Requer PyYAML (`pip install pyyaml`) — arquivos `.json` funcionam sem ele.
 
@@ -255,7 +261,9 @@ python3 rf_previsto.py --data-final 20260804 --horizontes 3d --sem-vegetacao
 python3 rf_previsto.py --data-final 20260804 --horizontes 3d --sem-vegetacao --sem-topografia
 ```
 
-Semântica: **topografia desligada** zera a correção (FTOP≡1) e dispensa o arquivo de topografia; **vegetação desligada** substitui as classes por uma classe uniforme (`--classe-veg`, padrão 4) mantendo a máscara d'água e a grade de 1 km — o domínio fica idêntico ao da referência, e a diferença entre os campos mede só o efeito das classes. Os fatores de latitude e meteorológicos permanecem ativos. Proteções: o produto ganha sufixo automático (`_SEMVEG`/`_SEMTOPO`), nunca sobrescrevendo a referência, e o NetCDF registra os fatores desligados nos atributos globais (`fator_vegetacao`/`fator_topografia`). As chaves também existem no YAML (`sem_vegetacao`, `sem_topografia`, `classe_veg`).
+Semântica: **topografia desligada** zera a correção (FTOP≡1) e dispensa o arquivo de topografia; **vegetação desligada** dispensa o mapa de vegetação (o arquivo **não é lido**): todos os pontos recebem uma classe uniforme (`--classe-veg`, padrão 4) e a saída passa a usar a **grade da precipitação** — sem interpolação para 1 km e sem máscara d'água. Com as duas chaves ligadas, portanto, o RF roda **sem nenhum arquivo estático** (útil quando o mapa de vegetação e a topografia ainda não estão disponíveis). Se a topografia permanecer ligada com a vegetação desligada, o campo de elevação é regradeado automaticamente para a grade da precipitação. Os fatores de latitude e meteorológicos permanecem ativos. Proteções: o produto ganha sufixo automático (`_SEMVEG`/`_SEMTOPO`), nunca sobrescrevendo a referência, e o NetCDF registra os fatores desligados nos atributos globais (`fator_vegetacao`/`fator_topografia`). As chaves também existem no YAML (`sem_vegetacao`, `sem_topografia`, `classe_veg`).
+
+Observação: como a saída `_SEMVEG` fica na grade da precipitação (≈10 km) e sem máscara d'água, ela não é diretamente comparável ponto a ponto com a referência de 1 km — use-a para avaliar padrões espaciais e magnitudes, ou compare após regradear a referência para a mesma grade.
 
 ## 6. Preparo dos dados de entrada (prepara_gfs.py e prepara_imerg.py)
 

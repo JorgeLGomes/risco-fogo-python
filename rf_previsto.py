@@ -351,7 +351,10 @@ def main():
                         help="Passo do intervalo (padrão: 6h).")
     parser.add_argument("--data-final", default=None,
                         help="Data da rodada YYYYMMDD (padrão: hoje). "
-                             "O modelo é sempre a rodada das 00 UTC.")
+                             "Aceita também 'hoje' explicitamente — útil no "
+                             "YAML para fixar a data do sistema com "
+                             "horizontes pré-estabelecidos. O modelo é "
+                             "sempre a rodada das 00 UTC.")
     parser.add_argument("--fonte", default=None,
                         help="Fonte de previsão (gfs, eta, besm ou outra "
                              "definida via --config-fontes). Sem esta "
@@ -387,9 +390,11 @@ def main():
                              "horizontes (mergetime).")
     parser.add_argument("--sem-vegetacao", action="store_true",
                         help="Análise de sensibilidade: desliga o efeito da "
-                             "vegetação (classe uniforme --classe-veg em "
-                             "toda a terra; água preservada). O produto "
-                             "ganha o sufixo _SEMVEG.")
+                             "vegetação. O mapa de vegetação NÃO é lido "
+                             "(o arquivo é dispensado): classe uniforme "
+                             "--classe-veg em todos os pontos e saída na "
+                             "grade da precipitação (sem máscara d'água). "
+                             "O produto ganha o sufixo _SEMVEG.")
     parser.add_argument("--sem-topografia", action="store_true",
                         help="Análise de sensibilidade: desliga o Fator "
                              "Topográfico (FTOP=1; o arquivo de topografia "
@@ -437,8 +442,12 @@ def main():
     # -----------------------------------------------------------------------
     # Datas
     # -----------------------------------------------------------------------
-    if args.data_final:
-        hoje = dt.datetime.strptime(args.data_final, "%Y%m%d")
+    # "hoje" / "auto" / "sistema" (ou vazio) = data do sistema; assim o
+    # YAML pode declarar explicitamente uma rodada diária operacional com
+    # horizontes pré-estabelecidos (execucao: data_final: hoje).
+    if args.data_final and str(args.data_final).lower() not in (
+            "hoje", "auto", "sistema"):
+        hoje = dt.datetime.strptime(str(args.data_final), "%Y%m%d")
     else:
         hoje = dt.datetime.now().replace(hour=0, minute=0, second=0,
                                          microsecond=0)

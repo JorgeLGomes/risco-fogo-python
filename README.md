@@ -52,9 +52,15 @@ python3 prepara_imerg.py --config config.yaml
 python3 prepara_gfs.py --config config.yaml
 python3 rf_previsto.py --config config.yaml
 
+# Rodada diária operacional definida só no YAML (execucao: data_final: hoje
+# + horizontes pré-estabelecidos) — cada execução usa a data do sistema
+python3 rf_previsto.py --config config.yaml
+
 # Análise de sensibilidade: desligar componentes individualmente
 python3 rf_previsto.py --horizontes 3d --sem-topografia
 python3 rf_previsto.py --horizontes 3d --sem-vegetacao --classe-veg 4
+# --sem-vegetacao dispensa o mapa (saída na grade da precipitação);
+# com --sem-topografia junto, roda sem NENHUM arquivo estático
 ```
 
 ## Validação

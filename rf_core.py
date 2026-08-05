@@ -195,6 +195,18 @@ def ler_topografia(arquivo_topografia):
     return elev
 
 
+def ler_topografia_grade(arquivo_topografia):
+    """Como ``ler_topografia``, mas devolve também as coordenadas
+    (elev, lat, lon) — necessário quando a grade de saída não é a do mapa
+    de vegetação (ex.: ``--sem-vegetacao``) e a topografia precisa ser
+    regradeada."""
+    with xr.open_dataset(arquivo_topografia, decode_times=False) as m:
+        elev = np.asarray(m["Band1"].values, dtype=np.float32)
+        lat = np.asarray(m["lat"].values, dtype=np.float64)
+        lon = np.asarray(m["lon"].values, dtype=np.float64)
+    return elev, lat, lon
+
+
 # ---------------------------------------------------------------------------
 # Cálculo do Risco de Fogo
 # ---------------------------------------------------------------------------
@@ -283,13 +295,15 @@ def calcula_risco_fogo_dados(precip_invertida, lat_prec, lon_prec,
         Temperatura a 2 m em °C e umidade relativa em décimos.
     lat_met, lon_met : coordenadas 1D da grade de t2m/ur2m.
     usar_vegetacao : bool
-        False = desliga o efeito da vegetação: todas as áreas de terra
-        recebem a MESMA classe (``classe_veg_uniforme``), isolando o efeito
-        das demais variáveis. A máscara d'água (classe 0) é preservada e o
-        mapa continua definindo a grade de 1 km.
+        False = desliga o efeito da vegetação e DISPENSA o arquivo do mapa
+        (não é lido): todos os pontos recebem a MESMA classe
+        (``classe_veg_uniforme``) e a grade de saída passa a ser a grade da
+        precipitação (sem interpolação para 1 km e sem máscara d'água).
     usar_topografia : bool
         False = desliga o Fator Topográfico (FTOP = 1 em toda parte); o
-        arquivo de topografia nem é lido.
+        arquivo de topografia nem é lido. Se ligado e a grade da topografia
+        for diferente da grade de saída (caso ``--sem-vegetacao``), o campo
+        é regradeado automaticamente.
     classe_veg_uniforme : int
         Classe usada quando ``usar_vegetacao=False`` (padrão 4:
         A = 2.4, PSE_max = 75 — valores intermediários).
@@ -306,22 +320,29 @@ def calcula_risco_fogo_dados(precip_invertida, lat_prec, lon_prec,
 
     lat_gfs, lon_gfs = lat_met, lon_met
 
-    log("")
-    log("Abrindo o arquivo de mapa de vegetação.")
-    log("")
-    mapa_veg, lat_veg, lon_veg = ler_mapa_vegetacao(arquivo_mapa_veg)
-    nlat_veg, nlon_veg = mapa_veg.shape
-
-    if not usar_vegetacao:
+    if usar_vegetacao:
         log("")
-        log(f"AVISO: fator de VEGETACAO desligado — classe uniforme "
-            f"{classe_veg_uniforme} em toda a terra (agua preservada).")
-        mapa_veg = np.where(mapa_veg == 0, 0,
-                            classe_veg_uniforme).astype(np.int32)
+        log("Abrindo o arquivo de mapa de vegetação.")
+        log("")
+        mapa_veg, lat_veg, lon_veg = ler_mapa_vegetacao(arquivo_mapa_veg)
+        nlat_veg, nlon_veg = mapa_veg.shape
 
-    # Grade de destino de 1 km (equivalente ao fspan do NCL).
-    lat_1km = np.linspace(lat_veg[0], lat_veg[-1], nlat_veg)
-    lon_1km = np.linspace(lon_veg[0], lon_veg[-1], nlon_veg)
+        # Grade de destino de 1 km (equivalente ao fspan do NCL).
+        lat_1km = np.linspace(lat_veg[0], lat_veg[-1], nlat_veg)
+        lon_1km = np.linspace(lon_veg[0], lon_veg[-1], nlon_veg)
+    else:
+        # Vegetação desligada: o mapa NÃO é lido (o arquivo é dispensado).
+        # A grade de saída passa a ser a grade da precipitação e todos os
+        # pontos recebem a mesma classe — sem máscara d'água.
+        log("")
+        log(f"AVISO: fator de VEGETACAO desligado — arquivo do mapa NAO "
+            f"lido; classe uniforme {classe_veg_uniforme} em todos os "
+            f"pontos; grade de saida = grade da precipitacao (sem mascara "
+            f"d'agua e sem interpolacao para 1 km).")
+        lat_1km = np.asarray(lat_prec, dtype=np.float64)
+        lon_1km = np.asarray(lon_prec, dtype=np.float64)
+        mapa_veg = np.full((lat_1km.size, lon_1km.size),
+                           classe_veg_uniforme, dtype=np.int32)
 
     log("")
     log("Calculando a precipitação acumulada")
@@ -409,11 +430,19 @@ def calcula_risco_fogo_dados(precip_invertida, lat_prec, lon_prec,
         log("")
         log("Abrindo o arquivo de topografia")
         log("")
-        elev = ler_topografia(arquivo_topografia)
+        elev, lat_topo, lon_topo = ler_topografia_grade(arquivo_topografia)
         if elev.shape != rbf.shape:
-            raise RuntimeError(
-                f"A topografia {elev.shape} não tem a mesma grade do mapa de "
-                f"vegetação {rbf.shape}.")
+            if usar_vegetacao:
+                raise RuntimeError(
+                    f"A topografia {elev.shape} não tem a mesma grade do "
+                    f"mapa de vegetação {rbf.shape}.")
+            # Sem vegetação a grade de saída é a da precipitação:
+            # regradeia a topografia automaticamente.
+            log("")
+            log(f"AVISO: topografia {elev.shape} regradeada para a grade "
+                f"de saida {rbf.shape}.")
+            elev = interp_bilinear(elev, lat_topo, lon_topo,
+                                   lat_1km, lon_1km).astype(np.float32)
 
         log("")
         log("Calculando o fator de elevação")
@@ -436,8 +465,9 @@ def calcula_risco_fogo_dados(precip_invertida, lat_prec, lon_prec,
     log("")
     extras = {}
     if not usar_vegetacao:
-        extras["fator_vegetacao"] = (f"DESLIGADO (classe uniforme "
-                                     f"{classe_veg_uniforme})")
+        extras["fator_vegetacao"] = (
+            f"DESLIGADO (mapa nao lido; classe uniforme "
+            f"{classe_veg_uniforme}; grade da precipitacao)")
     if not usar_topografia:
         extras["fator_topografia"] = "DESLIGADO (FTOP = 1)"
     grava_netcdf_rf(xT, lat_1km, lon_1km, data_previsao, arquivo_saida,

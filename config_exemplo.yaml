@@ -79,10 +79,45 @@ execucao:
   ate: 13m               # fim do intervalo
   passo: 1m              # passo (Nh, Nd, Nm)
   # horizontes: 18h,7d18h,6m    # alternativa ao intervalo (lista)
-  # data_final: "20260804"      # rodada (padrão: hoje)
+
+  # Data da rodada:
+  #   data_final: "20260804"    # rodada fixa (YYYYMMDD)
+  #   data_final: hoje          # data do sistema (também: auto, sistema)
+  # Omitir a chave equivale a "hoje". Declarar "hoje" + horizontes fixos
+  # define uma rodada diária operacional: cada execução usa a data corrente
+  # e produz sempre os mesmos horizontes pré-estabelecidos.
+  data_final: hoje
+
   rb_max: 0.9
   produto: RF_PREV_BESM  # subdiretório de saída em data/output/2.2/
   jobs: 4
   fallback_gfs: false
   sem_tif: false
   fogograma: false
+
+  # --------------------------------------------------------------------------
+  # Análise de sensibilidade (rodadas com/sem topografia e vegetação)
+  # --------------------------------------------------------------------------
+  # As duas chaves são independentes e combináveis; o produto ganha sufixo
+  # automático (_SEMVEG / _SEMTOPO), nunca sobrescrevendo a referência.
+  #
+  #   sem_topografia: true   -> FTOP = 1; o arquivo de topografia NÃO é lido
+  #   sem_vegetacao: true    -> o mapa de vegetação NÃO é lido: classe
+  #                             uniforme (classe_veg) em todos os pontos e
+  #                             saída na grade da precipitação (sem máscara
+  #                             d'água). Com as duas chaves = true, o RF
+  #                             roda sem NENHUM arquivo estático.
+  #   classe_veg: 4          -> classe usada com sem_vegetacao (padrão 4:
+  #                             A = 2.4, PSE_max = 75)
+  #
+  # Rodada de referência (tudo ligado) — padrão:
+  sem_vegetacao: false
+  sem_topografia: false
+  classe_veg: 4
+  #
+  # Exemplos de combinações (descomente UMA por rodada, ou use a CLI, que
+  # sempre prevalece: --sem-vegetacao / --sem-topografia / --classe-veg):
+  #   sem_topografia: true                        # só sem topografia
+  #   sem_vegetacao: true                         # só sem vegetação
+  #   sem_vegetacao: true                         # sem as duas — nenhum
+  #   sem_topografia: true                        #   arquivo estático

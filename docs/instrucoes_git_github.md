@@ -123,21 +123,27 @@ cd C:\Users\jorge\Claude\Projects\risco-fogo-python
 
 git status
 git add -A
-git commit -m "Adiciona analise de sensibilidade e regrade automatico de grades mistas
+git commit -m "Sensibilidade sem arquivos estaticos e rodada diaria via YAML
 
-- rf_core/rf_previsto: --sem-vegetacao (classe uniforme, agua preservada) e
-  --sem-topografia (FTOP=1, arquivo dispensado), independentes e combinaveis;
-  sufixos _SEMVEG/_SEMTOPO no produto e fatores desligados registrados nos
-  atributos do NetCDF; chaves tambem no YAML (execucao)
-- rf_core.ler_precipitacao: regradeia automaticamente arquivos em grade
-  diferente da referencia (GFS 0.25 + IMERG 0.1 no modo legado) e tolera
-  latitude N->S
-- Manual v1.7: opcoes na secao 5.2 e nova secao 5.6 (sensibilidade)"
+- rf_core: com usar_vegetacao=False o mapa NAO e lido; classe uniforme em
+  todos os pontos e saida na grade da precipitacao, sem mascara d'agua;
+  topografia (se ligada) regradeada automaticamente (ler_topografia_grade);
+  com --sem-vegetacao --sem-topografia o RF roda sem NENHUM arquivo estatico
+- rf_previsto: --data-final aceita 'hoje'/'auto'/'sistema' (data do sistema),
+  permitindo rodada diaria operacional definida so no YAML (data_final: hoje
+  + horizontes pre-estabelecidos)
+- config_exemplo.yaml: chaves de sensibilidade (sem_vegetacao,
+  sem_topografia, classe_veg) comentadas com as combinacoes de rodada
+- Manual v1.8: secoes 5.2, 5.5 e 5.6 atualizadas"
 
 git push origin main
 ```
 
 E no servidor (ian01): `git pull`.
+
+Se o commit "Dispensa o mapa de vegetacao..." já tiver sido feito antes,
+este novo `git add -A` + commit leva apenas o restante — a mensagem acima
+continua válida.
 
 ## 6. Comandos úteis do dia a dia
 
