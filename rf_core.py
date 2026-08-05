@@ -208,7 +208,10 @@ def calcula_risco_fogo(arquivo_temp_ur,
                        rb_maximo=0.9,
                        nome_var_precip="prec",
                        titulo=None,
-                       log=print):
+                       log=print,
+                       usar_vegetacao=True,
+                       usar_topografia=True,
+                       classe_veg_uniforme=4):
     """Calcula o Risco de Fogo previsto em 1 km e grava o NetCDF de saída.
 
     Parameters
@@ -254,6 +257,9 @@ def calcula_risco_fogo(arquivo_temp_ur,
         rb_maximo=rb_maximo,
         titulo=titulo,
         log=log,
+        usar_vegetacao=usar_vegetacao,
+        usar_topografia=usar_topografia,
+        classe_veg_uniforme=classe_veg_uniforme,
     )
 
 
@@ -261,7 +267,9 @@ def calcula_risco_fogo_dados(precip_invertida, lat_prec, lon_prec,
                              t2m, ur2m, lat_met, lon_met,
                              arquivo_mapa_veg, arquivo_topografia,
                              arquivo_saida, data_previsao,
-                             rb_maximo=0.9, titulo=None, log=print):
+                             rb_maximo=0.9, titulo=None, log=print,
+                             usar_vegetacao=True, usar_topografia=True,
+                             classe_veg_uniforme=4):
     """Calcula o RF a partir de arrays já carregados (qualquer fonte).
 
     Parameters
@@ -274,6 +282,17 @@ def calcula_risco_fogo_dados(precip_invertida, lat_prec, lon_prec,
     t2m, ur2m : ndarray (nlat_met, nlon_met)
         Temperatura a 2 m em °C e umidade relativa em décimos.
     lat_met, lon_met : coordenadas 1D da grade de t2m/ur2m.
+    usar_vegetacao : bool
+        False = desliga o efeito da vegetação: todas as áreas de terra
+        recebem a MESMA classe (``classe_veg_uniforme``), isolando o efeito
+        das demais variáveis. A máscara d'água (classe 0) é preservada e o
+        mapa continua definindo a grade de 1 km.
+    usar_topografia : bool
+        False = desliga o Fator Topográfico (FTOP = 1 em toda parte); o
+        arquivo de topografia nem é lido.
+    classe_veg_uniforme : int
+        Classe usada quando ``usar_vegetacao=False`` (padrão 4:
+        A = 2.4, PSE_max = 75 — valores intermediários).
     Demais parâmetros como em ``calcula_risco_fogo``.
     """
 
@@ -292,6 +311,13 @@ def calcula_risco_fogo_dados(precip_invertida, lat_prec, lon_prec,
     log("")
     mapa_veg, lat_veg, lon_veg = ler_mapa_vegetacao(arquivo_mapa_veg)
     nlat_veg, nlon_veg = mapa_veg.shape
+
+    if not usar_vegetacao:
+        log("")
+        log(f"AVISO: fator de VEGETACAO desligado — classe uniforme "
+            f"{classe_veg_uniforme} em toda a terra (agua preservada).")
+        mapa_veg = np.where(mapa_veg == 0, 0,
+                            classe_veg_uniforme).astype(np.int32)
 
     # Grade de destino de 1 km (equivalente ao fspan do NCL).
     lat_1km = np.linspace(lat_veg[0], lat_veg[-1], nlat_veg)
@@ -379,20 +405,25 @@ def calcula_risco_fogo_dados(precip_invertida, lat_prec, lon_prec,
     FLAT = 1.0 + np.abs(lat_1km) * 0.003
     FLAT_C = FLAT[:, np.newaxis]          # 1D -> 2D (conform_dims do NCL)
 
-    log("")
-    log("Abrindo o arquivo de topografia")
-    log("")
-    elev = ler_topografia(arquivo_topografia)
-    if elev.shape != rbf.shape:
-        raise RuntimeError(
-            f"A topografia {elev.shape} não tem a mesma grade do mapa de "
-            f"vegetação {rbf.shape}.")
+    if usar_topografia:
+        log("")
+        log("Abrindo o arquivo de topografia")
+        log("")
+        elev = ler_topografia(arquivo_topografia)
+        if elev.shape != rbf.shape:
+            raise RuntimeError(
+                f"A topografia {elev.shape} não tem a mesma grade do mapa de "
+                f"vegetação {rbf.shape}.")
 
-    log("")
-    log("Calculando o fator de elevação")
-    log("")
-    # Correção do risco de fogo pela topografia (Fator Topográfico - FTOP).
-    FTOP = 1.0 + elev.astype(np.float64) * 0.00003
+        log("")
+        log("Calculando o fator de elevação")
+        log("")
+        # Correção do risco de fogo pela topografia (Fator Topográfico - FTOP).
+        FTOP = 1.0 + elev.astype(np.float64) * 0.00003
+    else:
+        log("")
+        log("AVISO: fator de TOPOGRAFIA desligado (FTOP = 1; arquivo não lido).")
+        FTOP = 1.0
 
     rbfn = rbf * FLAT_C * FTOP
     rbfn = np.where(rbfn > 1.0, 1.0, rbfn)
@@ -403,8 +434,14 @@ def calcula_risco_fogo_dados(precip_invertida, lat_prec, lon_prec,
     log("")
     log(f"Gerando o arquivo NetCDF para o dia {data_previsao}")
     log("")
+    extras = {}
+    if not usar_vegetacao:
+        extras["fator_vegetacao"] = (f"DESLIGADO (classe uniforme "
+                                     f"{classe_veg_uniforme})")
+    if not usar_topografia:
+        extras["fator_topografia"] = "DESLIGADO (FTOP = 1)"
     grava_netcdf_rf(xT, lat_1km, lon_1km, data_previsao, arquivo_saida,
-                    titulo=titulo)
+                    titulo=titulo, atributos_extras=extras or None)
 
     return arquivo_saida
 
@@ -413,9 +450,13 @@ def calcula_risco_fogo_dados(precip_invertida, lat_prec, lon_prec,
 # Escrita do NetCDF de saída
 # ---------------------------------------------------------------------------
 
-def grava_netcdf_rf(rbf, lat, lon, data_previsao, arquivo_saida, titulo=None):
+def grava_netcdf_rf(rbf, lat, lon, data_previsao, arquivo_saida, titulo=None,
+                    atributos_extras=None):
     """Grava o NetCDF do RF previsto, já com o eixo de tempo correto e o
-    valor ausente -999 (substitui o "cdo -r -setmissval,-999 -settaxis")."""
+    valor ausente -999 (substitui o "cdo -r -setmissval,-999 -settaxis").
+
+    ``atributos_extras``: dict opcional de atributos globais adicionais
+    (ex.: fatores desligados numa análise de sensibilidade)."""
 
     tempo = dt.datetime.strptime(data_previsao, "%Y%m%d%H")
 
@@ -447,6 +488,7 @@ def grava_netcdf_rf(rbf, lat, lon, data_previsao, arquivo_saida, titulo=None):
             "source": ("Codigo convertido de NCL para Python "
                        f"{sys.version.split()[0]} (numpy/xarray)"),
             "creation_date": dt.datetime.now().strftime("%a %b %d %H:%M:%S %Z %Y"),
+            **(atributos_extras or {}),
         },
     )
 

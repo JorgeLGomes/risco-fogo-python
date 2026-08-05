@@ -116,27 +116,25 @@ No GitHub, cada tag pode virar um "Release": página do repositório →
 ## 5. Commits pendentes desta atualização
 
 Todos os arquivos já estão no repositório local (gravados diretamente).
-Se os commits anteriores (v1.3.0/prepara_imerg) ainda não foram enviados,
-tudo sobe junto no mesmo push:
+Se commits anteriores ainda não subiram, tudo vai junto no mesmo push:
 
 ```powershell
 cd C:\Users\jorge\Claude\Projects\risco-fogo-python
 
 git status
 git add -A
-git commit -m "Corrige autenticacao/threads dos preparos e adiciona ativa_riscofogo.sh
+git commit -m "Adiciona analise de sensibilidade e regrade automatico de grades mistas
 
-- prepara_imerg: token Earthdata (Bearer, ~/.edl_token) como modo recomendado
-  e diagnostico claro da falha de login (HTML/401)
-- prepara_imerg e prepara_gfs: conversao NetCDF/GRIB serializada por lock
-  (HDF5/eccodes nao sao thread-safe) — corrige Segmentation fault em lote
-- ativa_riscofogo.sh: module load + conda env por nome/caminho, deteccao de
-  env sem Python com fallback para o venv e sanidade das bibliotecas
-- Manual v1.6: secao 3.1 (ambiente no cluster), 6.2 (token) e novos itens
-  de solucao de problemas"
+- rf_core/rf_previsto: --sem-vegetacao (classe uniforme, agua preservada) e
+  --sem-topografia (FTOP=1, arquivo dispensado), independentes e combinaveis;
+  sufixos _SEMVEG/_SEMTOPO no produto e fatores desligados registrados nos
+  atributos do NetCDF; chaves tambem no YAML (execucao)
+- rf_core.ler_precipitacao: regradeia automaticamente arquivos em grade
+  diferente da referencia (GFS 0.25 + IMERG 0.1 no modo legado) e tolera
+  latitude N->S
+- Manual v1.7: opcoes na secao 5.2 e nova secao 5.6 (sensibilidade)"
 
 git push origin main
-git push origin v1.3.0     # se a tag ainda nao subiu
 ```
 
 E no servidor (ian01): `git pull`.

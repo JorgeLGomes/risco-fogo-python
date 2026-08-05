@@ -60,7 +60,8 @@ CAMINHOS_PADRAO = {
 # Chaves aceitas em "execucao" -> nome do atributo do argparse.
 EXECUCAO_CHAVES = ("fonte", "horizontes", "de", "ate", "passo", "data_final",
                    "rb_max", "produto", "jobs", "fallback_gfs", "sem_tif",
-                   "fogograma")
+                   "fogograma", "sem_vegetacao", "sem_topografia",
+                   "classe_veg")
 
 SECOES_VALIDAS = {"base", "caminhos", "fontes", "execucao"}
 

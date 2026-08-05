@@ -248,6 +248,9 @@ def processa_previsao(parametros):
                     data_previsao=data_previsao,
                     rb_maximo=parametros["rb_maximo"],
                     log=log,
+                    usar_vegetacao=parametros.get("usar_vegetacao", True),
+                    usar_topografia=parametros.get("usar_topografia", True),
+                    classe_veg_uniforme=parametros.get("classe_veg_uniforme", 4),
                 )
             else:
                 # ----- modo multifonte (GFS/Eta/BESM, qualquer frequência)
@@ -294,6 +297,9 @@ def processa_previsao(parametros):
                     data_previsao=data_previsao,
                     rb_maximo=parametros["rb_maximo"],
                     log=log,
+                    usar_vegetacao=parametros.get("usar_vegetacao", True),
+                    usar_topografia=parametros.get("usar_topografia", True),
+                    classe_veg_uniforme=parametros.get("classe_veg_uniforme", 4),
                 )
         return (data_previsao, True, "")
     except Exception as exc:  # noqa: BLE001 - registra qualquer falha no log
@@ -379,6 +385,18 @@ def main():
     parser.add_argument("--fogograma", action="store_true",
                         help="Gera também um único NetCDF com todos os "
                              "horizontes (mergetime).")
+    parser.add_argument("--sem-vegetacao", action="store_true",
+                        help="Análise de sensibilidade: desliga o efeito da "
+                             "vegetação (classe uniforme --classe-veg em "
+                             "toda a terra; água preservada). O produto "
+                             "ganha o sufixo _SEMVEG.")
+    parser.add_argument("--sem-topografia", action="store_true",
+                        help="Análise de sensibilidade: desliga o Fator "
+                             "Topográfico (FTOP=1; o arquivo de topografia "
+                             "nem é lido). O produto ganha o sufixo _SEMTOPO.")
+    parser.add_argument("--classe-veg", type=int, default=4,
+                        help="Classe usada com --sem-vegetacao (padrão 4: "
+                             "A=2.4, PSE_max=75).")
     parser.add_argument("--config", default=None,
                         help="Arquivo de configuração YAML (ou JSON) dos "
                              "dados de entrada: base, caminhos (IMERG, "
@@ -449,6 +467,12 @@ def main():
     produto = args.produto
     if fonte is not None and produto == PRODUTO_PADRAO:
         produto = f"RF_PREV_{fonte.nome.upper()}"
+    # Sensibilidade: sufixos automáticos para nunca misturar com a rodada
+    # de referência.
+    if args.sem_vegetacao:
+        produto += "_SEMVEG"
+    if args.sem_topografia:
+        produto += "_SEMTOPO"
 
     dirin_gfs = f"{base}/data/output/2.2/GFS/netcdf/{data_modelo}"
     if fonte is not None:
@@ -512,6 +536,9 @@ def main():
                 dir_output_netcdf, f"RF.PREV.{data_previsao}.nc"),
             "rb_maximo": args.rb_max,
             "dir_log": dir_log,
+            "usar_vegetacao": not args.sem_vegetacao,
+            "usar_topografia": not args.sem_topografia,
+            "classe_veg_uniforme": args.classe_veg,
             "fonte": fonte.nome if fonte else None,
             "config_fontes": args.config_fontes,
             "config": args.config,

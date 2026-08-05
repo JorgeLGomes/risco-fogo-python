@@ -2,7 +2,7 @@
 
 ## Risco de Fogo Previsto em Python — INPE_FireRiskModel v2.2
 
-**Versão:** 1.6 · 5 de agosto de 2026
+**Versão:** 1.7 · 5 de agosto de 2026
 **Substitui:** `rf_previsto_1-5dias_2023.sh` e `rf_previsto_1-2_semanas_2024.sh` (bash + NCL)
 
 ---
@@ -164,6 +164,9 @@ python3 rf_previsto.py --fonte besm --horizontes 6m
 | `--fallback-gfs` | Se o GFS do horário exato não existir, usa o horário anterior do mesmo dia (generaliza a cópia 12 UTC → 18 UTC do produto semanal) | desativado |
 | `--sem-tif` | Gera apenas os NetCDF, sem GeoTIFF | TIF ativado |
 | `--fogograma` | Gera também um único NetCDF com todos os horizontes | desativado |
+| `--sem-vegetacao` | Sensibilidade: desliga o efeito da vegetação (classe uniforme `--classe-veg` em toda a terra; água preservada); produto ganha sufixo `_SEMVEG` | desativado |
+| `--sem-topografia` | Sensibilidade: desliga o Fator Topográfico (FTOP=1; o arquivo de topografia nem é lido); produto ganha sufixo `_SEMTOPO` | desativado |
+| `--classe-veg N` | Classe usada com `--sem-vegetacao` | 4 (A=2,4; PSE_max=75) |
 | `--data-final YYYYMMDD` / `--jobs N` | Como nos demais scripts | hoje / 4 |
 
 As saídas seguem o mesmo formato dos demais produtos (`RF.PREV.YYYYMMDDHH.nc` e `.tif`), gravadas em `data/output/2.2/<produto>/netcdf|tif/<modelo>/`. O script genérico não gera links D1–D5, cópias T7/T14 nem faz envio a servidores — para os produtos operacionais, use os scripts dedicados.
@@ -240,6 +243,19 @@ python3 rf_previsto.py --config config.yaml --horizontes 6m   # CLI prevalece
 ```
 
 O arquivo `config_exemplo.yaml` traz o modelo completo comentado; as seções são validadas na leitura (chave desconhecida gera erro com a lista das válidas). Requer PyYAML (`pip install pyyaml`) — arquivos `.json` funcionam sem ele.
+
+### 5.6 Análise de sensibilidade (--sem-vegetacao / --sem-topografia)
+
+Para medir o impacto individual de cada componente do modelo, as duas chaves podem ser desligadas de forma independente (e combinadas):
+
+```bash
+python3 rf_previsto.py --data-final 20260804 --horizontes 3d              # referência
+python3 rf_previsto.py --data-final 20260804 --horizontes 3d --sem-topografia
+python3 rf_previsto.py --data-final 20260804 --horizontes 3d --sem-vegetacao
+python3 rf_previsto.py --data-final 20260804 --horizontes 3d --sem-vegetacao --sem-topografia
+```
+
+Semântica: **topografia desligada** zera a correção (FTOP≡1) e dispensa o arquivo de topografia; **vegetação desligada** substitui as classes por uma classe uniforme (`--classe-veg`, padrão 4) mantendo a máscara d'água e a grade de 1 km — o domínio fica idêntico ao da referência, e a diferença entre os campos mede só o efeito das classes. Os fatores de latitude e meteorológicos permanecem ativos. Proteções: o produto ganha sufixo automático (`_SEMVEG`/`_SEMTOPO`), nunca sobrescrevendo a referência, e o NetCDF registra os fatores desligados nos atributos globais (`fator_vegetacao`/`fator_topografia`). As chaves também existem no YAML (`sem_vegetacao`, `sem_topografia`, `classe_veg`).
 
 ## 6. Preparo dos dados de entrada (prepara_gfs.py e prepara_imerg.py)
 

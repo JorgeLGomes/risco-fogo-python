@@ -51,6 +51,10 @@ python3 rf_previsto.py --fonte besm --horizontes 6m
 python3 prepara_imerg.py --config config.yaml
 python3 prepara_gfs.py --config config.yaml
 python3 rf_previsto.py --config config.yaml
+
+# Análise de sensibilidade: desligar componentes individualmente
+python3 rf_previsto.py --horizontes 3d --sem-topografia
+python3 rf_previsto.py --horizontes 3d --sem-vegetacao --classe-veg 4
 ```
 
 ## Validação
