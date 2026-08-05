@@ -2,7 +2,7 @@
 
 ## Risco de Fogo Previsto em Python — repositório `JorgeLGomes/risco-fogo-python`
 
-**Versão:** 1.2 · 4 de agosto de 2026
+**Versão:** 1.3 · 5 de agosto de 2026
 
 Este documento descreve como manter o repositório do projeto no GitHub:
 estrutura, fluxo de commits, convenções de mensagem, versões (tags) e
@@ -16,12 +16,17 @@ solução dos problemas mais comuns.
 risco-fogo-python/
 ├── rf_core.py                  # Núcleo do cálculo do RF
 ├── rf_fontes.py                # Camada de fontes (GFS, Eta, BESM)
+├── rf_config.py                # Configuração YAML dos dados de entrada
+├── config_exemplo.yaml         # Modelo comentado do config
 ├── rf_previsto_1_5dias.py      # Produto diário (1–5 dias)
 ├── rf_previsto_1_2_semanas.py  # Produto semanal (7 e 14 dias)
 ├── rf_previsto.py              # Script genérico (qualquer horizonte/fonte)
+├── prepara_gfs.py              # Download/preparo do GFS (pós-SCN 25-81)
 ├── teste_rf.py                 # Teste do núcleo
 ├── teste_rf_previsto.py        # Teste do script genérico
 ├── teste_rf_multifonte.py      # Teste do modo multifonte
+├── teste_besm_real.py          # Teste com dados reais do BESM T062
+├── teste_prepara_gfs.py        # Teste do preparo do GFS
 ├── requirements.txt            # Dependências Python
 ├── README.md
 ├── .gitignore                  # Ignora __pycache__, *.nc, *.tif e logs
@@ -99,40 +104,42 @@ Histórico de versões do projeto:
 | `v1.0.0` | Conversão NCL → Python dos dois produtos operacionais + documentação |
 | `v1.1.0` | Script genérico de horizontes (`rf_previsto.py`) + documentação v1.1 |
 | `v1.2.0` | Multifonte (GFS/Eta/BESM até 13 meses, acúmulos 1h/12h/1d) + documentação v1.2 |
+| `v1.3.0` | Config YAML (--config), prepara_gfs.py (pós-SCN 25-81) e documentação v1.4 |
 
 No GitHub, cada tag pode virar um "Release": página do repositório →
 *Releases* → *Draft a new release* → escolha a tag, descreva e publique.
 
-## 5. Commits pendentes desta atualização (v1.2)
+## 5. Commits pendentes desta atualização (v1.3)
 
-Depois de copiar os arquivos novos/atualizados para o repositório
-(`rf_fontes.py`, `rf_previsto.py`, `rf_core.py`, `teste_rf_multifonte.py` e
-`README.md` na raiz; os documentos — inclusive este — em `docs\`):
+Todos os arquivos já estão no repositório local (gravados diretamente).
+Confira, teste e envie:
 
 ```powershell
 cd C:\Users\jorge\Claude\Projects\risco-fogo-python
 
-git add rf_fontes.py rf_previsto.py rf_core.py teste_rf_multifonte.py
-git commit -m "Adiciona suporte multifonte: GFS, Eta e BESM ate 13 meses
+git status                        # confira os arquivos novos/alterados
+python teste_rf.py
+python teste_rf_previsto.py
+python teste_rf_multifonte.py
+python teste_prepara_gfs.py
 
-- rf_fontes.py: camada de fontes configuravel (padroes de nome, variaveis,
-  frequencia dos acumulos 1h/12h/1d, tipo de acumulacao, unidades, alcance)
-- Serie diaria de 120 tempos combinando IMERG observado + previsao da fonte
-- rf_core: nova calcula_risco_fogo_dados (arrays), mantendo compatibilidade
-- rf_previsto.py: --fonte, --config-fontes e horizontes em meses (Nm)
-- teste_rf_multifonte.py: 6 cenarios, incluindo Eta 13m e BESM 12h"
+git add -A
+git commit -m "Atualiza para v1.3: generico, multifonte, config YAML e prepara_gfs
 
-git add README.md docs/
-git commit -m "Atualiza documentacao para v1.2 (multifonte e horizontes de ate 13 meses)
+- rf_previsto.py: qualquer horizonte (h/d/meses) e fonte (--fonte gfs|eta|besm)
+- rf_fontes.py: camada de fontes, layouts por_tempo/serie, BESM T062 real
+- rf_config.py + config_exemplo.yaml: entradas configuraveis via YAML (--config)
+- prepara_gfs.py: download do GFS pos-SCN 25-81 (fast download .idx na AWS/
+  NOMADS ou grib filter); pygrib no requirements
+- rf_core.py: calcula_risco_fogo_dados (arrays) para o modo multifonte
+- 4 suites de teste novas; manual v1.4 e estas instrucoes atualizadas"
 
-- Manual: secoes 5.3 (fontes e horizontes longos) e 5.4 (configuracao JSON)
-- Relatorio: rf_fontes.py na arquitetura e item de multifonte nas melhorias
-- Adiciona docs/instrucoes_git_github.md (este documento)"
-
-git tag -a v1.2.0 -m "Multifonte: Eta e BESM ate 13 meses"
+git tag -a v1.3.0 -m "Multifonte + config YAML + prepara_gfs"
 git push origin main
-git push origin v1.2.0
+git push origin v1.3.0
 ```
+
+E no servidor (ian01): `git pull`.
 
 ## 6. Comandos úteis do dia a dia
 

@@ -2,7 +2,7 @@
 
 ## Risco de Fogo Previsto em Python — INPE_FireRiskModel v2.2
 
-**Versão:** 1.3 · 4 de agosto de 2026
+**Versão:** 1.4 · 5 de agosto de 2026
 **Substitui:** `rf_previsto_1-5dias_2023.sh` e `rf_previsto_1-2_semanas_2024.sh` (bash + NCL)
 
 ---
@@ -58,9 +58,11 @@ config_exemplo.yaml
 rf_previsto_1_5dias.py
 rf_previsto_1_2_semanas.py
 rf_previsto.py
+prepara_gfs.py
 teste_rf.py
 teste_rf_previsto.py
 teste_rf_multifonte.py
+teste_prepara_gfs.py
 ```
 
 Os scripts devem ficar no mesmo diretório (os orquestradores fazem `import rf_core`). Se desejar, torne-os executáveis:
@@ -226,9 +228,37 @@ python3 rf_previsto.py --config config.yaml --horizontes 6m   # CLI prevalece
 
 O arquivo `config_exemplo.yaml` traz o modelo completo comentado; as seções são validadas na leitura (chave desconhecida gera erro com a lista das válidas). Requer PyYAML (`pip install pyyaml`) — arquivos `.json` funcionam sem ele.
 
-## 6. Saídas
+## 6. Preparo dos dados de entrada do GFS (prepara_gfs.py)
 
-### 6.1 Produto diário (1 a 5 dias)
+O `prepara_gfs.py` baixa a previsão do GFS 0,25° da NOAA e grava os arquivos `GFS.PREV.PREC.*` (prec em mm/dia) e `GFS.PREV.TEMP2m.RH2m.*` (T2m em K, UR2m em %) na convenção da seção 2.2, prontos para o `rf_previsto.py`. Requer o pygrib (`python3 -m pip install pygrib`).
+
+**Importante:** o serviço OpenDAP do NOMADS foi **aposentado pela NOAA** (Service Change Notice 25-81, efetivo em 23/02/2026). O script usa os serviços vigentes indicados no próprio aviso:
+
+| Método | Descrição |
+|---|---|
+| `s3` (padrão) | "Fast download method": lê o índice `.idx` de cada horário e baixa por byte-range só as 3 mensagens GRIB necessárias, no espelho oficial da AWS (`noaa-gfs-bdp-pds`), ~2 MB por horário |
+| `nomads` | O mesmo fast download, direto no HTTPS do NOMADS (`/pub/data/nccf/com/gfs/prod/...`) |
+| `filtro` | Grib filter do NOMADS (recorte de variáveis/região no servidor; URL ajustável via `--url-filtro`) |
+
+```bash
+python3 prepara_gfs.py                          # rodada de hoje 00 UTC, 16 dias
+python3 prepara_gfs.py --data 20260805 --config config.yaml
+python3 prepara_gfs.py --simular                # só mostra o plano e a URL
+python3 prepara_gfs.py --metodo nomads          # se a AWS estiver bloqueada
+```
+
+Opções principais: `--data`/`--rodada` (rodada), `--dias` (alcance, padrão 16), `--passo` (validades, padrão 6 h), `--dominio latS,latN,lonW,lonE`, `--acumulo 24h|dia`, `--jobs` (downloads simultâneos), `--base`/`--config` (destino), `--sobrescrever` e `--simular`.
+
+Sobre a precipitação: o APCP do GFS vem em "baldes" (6 h até +240 h; 12 h de +240 h a +384 h). O acumulado diário de cada validade soma os baldes que cobrem as 24 h anteriores, com o intervalo lido do próprio GRIB — a transição 6 h/12 h é automática, e validades sem arquivo além de +240 h (fora do passo de 12 h) são puladas com aviso. Fluxo típico de uma rodada:
+
+```bash
+python3 prepara_gfs.py --config config.yaml           # 1. baixa e prepara o GFS
+python3 rf_previsto.py --de 6h --ate 4d18h --passo 6h # 2. calcula o RF
+```
+
+## 7. Saídas
+
+### 7.1 Produto diário (1 a 5 dias)
 
 | Saída | Local |
 |---|---|
@@ -238,20 +268,20 @@ O arquivo `config_exemplo.yaml` traz o modelo completo comentado; as seções s�
 | Cópias T0–T4 (18 UTC) | `.../tif/<modelo>/RF.PREV.T<d>.YYYYMMDD18.tif` |
 | Fogograma (todos os horários juntos) | `data/output/2.2/fogograma/RF.PREV.<data>00.nc` |
 
-### 6.2 Produto semanal (1 a 2 semanas)
+### 7.2 Produto semanal (1 a 2 semanas)
 
 | Saída | Local |
 |---|---|
 | NetCDF (2 arquivos: +7 e +14 dias) | `data/output/2.2/RF_PREV_SEMANAL/netcdf/<modelo>/` |
 | GeoTIFF T7 e T14 | `.../RF_PREV_SEMANAL/tif/<modelo>/RF.PREV.T7.tif` e `RF.PREV.T14.tif` |
 
-### 6.3 Formato dos arquivos
+### 7.3 Formato dos arquivos
 
 O NetCDF contém a variável `rbf(time, lat, lon)` com o RF em [0, 1], arredondado a 2 casas decimais, valor ausente −999 e eixo de tempo na data/hora da previsão. O GeoTIFF está em EPSG:4326, orientado de norte para sul, com nodata −999, compressão LZW e organização em tiles.
 
 Interpretação usual do RF: mínimo (< 0.15), baixo (0.15–0.40), médio (0.40–0.70), alto (0.70–0.95) e crítico (≥ 0.95).
 
-## 7. Logs e monitoramento
+## 8. Logs e monitoramento
 
 | Log | Conteúdo |
 |---|---|
@@ -261,7 +291,7 @@ Interpretação usual do RF: mínimo (< 0.15), baixo (0.15–0.40), médio (0.40
 
 O código de saída é 0 em caso de sucesso e 1 se alguma previsão não foi gerada (mensagem `PROBLEMA - FALTAM ARQUIVOS EM <dir>`), o que permite monitorar a rodada no cron da mesma forma que antes.
 
-## 8. Solução de problemas
+## 9. Solução de problemas
 
 | Sintoma | Causa provável | O que fazer |
 |---|---|---|
@@ -273,7 +303,7 @@ O código de saída é 0 em caso de sucesso e 1 se alguma previsão não foi ger
 | Falha no envio (lftp/scp) | Rede ou credenciais | O cálculo não é afetado; reenvie manualmente ou rode novamente com envio |
 | `ModuleNotFoundError: rasterio` (ou outra biblioteca) | Dependências não instaladas no Python usado | `pip install numpy xarray netCDF4 rasterio` |
 
-## 9. Testes de validação
+## 10. Testes de validação
 
 Após instalar ou alterar qualquer coisa, rode:
 
@@ -281,14 +311,15 @@ Após instalar ou alterar qualquer coisa, rode:
 python3 teste_rf.py            # valida o núcleo do cálculo (rf_core)
 python3 teste_rf_previsto.py   # valida o script genérico de ponta a ponta
 python3 teste_rf_multifonte.py # valida o modo multifonte (Eta 13m, BESM 12h, JSON)
+python3 teste_prepara_gfs.py   # valida o preparo do GFS (idx, baldes, NetCDF)
 ```
 
 O primeiro teste cria dados sintéticos em `/tmp/teste_rf`, executa o cálculo completo e compara com uma implementação de referência fiel ao NCL; a saída esperada termina com `TODOS OS TESTES PASSARAM`. O segundo monta uma árvore com a estrutura de diretórios da produção em `/tmp/teste_generico` e executa o `rf_previsto.py` real em cinco cenários (lista, intervalo, fallback do GFS, horizonte absoluto e falha controlada).
 
-## 10. Segurança
+## 11. Segurança
 
 O script semanal contém as credenciais do `lftp` (herdadas do shell script original) nas constantes `LFTP_USUARIO` e `LFTP_SENHA`. Recomenda-se movê-las para variáveis de ambiente ou para o arquivo `~/.netrc` e restringir a permissão de leitura dos scripts.
 
-## 11. Suporte
+## 12. Suporte
 
 Modelo: Alberto Setzer (alberto.setzer@inpe.br) · Código NCL original: Guilherme Martins (guilherme.martins@inpe.br) · Programa Queimadas: http://www.inpe.br/queimadas/

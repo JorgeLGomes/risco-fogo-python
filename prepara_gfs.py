@@ -1,73 +1,190 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-prepara_gfs.py
-==============
+prepara_gfs.py  (v2)
+====================
 
-Baixa a previsão do GFS 0.25° (NOMADS/NCEP) e prepara os dados de entrada
-do Risco de Fogo, gravando os NetCDF na convenção esperada pelo pipeline:
+Baixa a previsão do GFS 0.25° e prepara os dados de entrada do Risco de
+Fogo, gravando os NetCDF na convenção esperada pelo pipeline:
 
     GFS.PREV.PREC.{modelo}.{valida}.nc         -> prec   (mm/dia)
     GFS.PREV.TEMP2m.RH2m.{modelo}.{valida}.nc  -> TEMP2m (K) e RH2m (%)
 
 em  {base}/data/output/2.2/GFS/netcdf/{modelo}/ .
 
-O acesso é feito via OpenDAP (servidor "dods" do NOMADS), o que dispensa
-bibliotecas GRIB (eccodes/pygrib): basta o netCDF4 com suporte a DAP, que
-já é dependência do pipeline. Cada variável é baixada em UMA requisição
-(recorte de domínio + todos os tempos), o que reduz o tráfego a ~30 MB
-por rodada.
+ATENÇÃO: o serviço OpenDAP ("dods") do NOMADS foi APOSENTADO pela NOAA
+(Service Change Notice 25-81, efetivo em 23/02/2026). A própria NOAA
+orienta migrar para o "grib filter" ou para o "fast download method"
+(HTTPS com byte-range guiado pelo índice .idx) — esta versão implementa
+ambos:
 
-Precipitação diária: o campo apcpsfc do GFS é acumulado em "baldes" de
-6 horas (o valor no passo h, com h múltiplo de 6, é o acumulado das
-6 horas anteriores). O acumulado diário de cada validade é a soma dos
-4 baldes das últimas 24 h (--acumulo 24h, padrão) ou dos baldes desde as
-00 UTC do dia da validade (--acumulo dia). Para validades nas primeiras
-24 h da rodada, soma-se o que existe desde o início.
+  --metodo s3      (padrão) espelho oficial do GFS no AWS Open Data
+                   (noaa-gfs-bdp-pds). Para cada horário de previsão são
+                   baixadas APENAS as 3 mensagens GRIB necessárias
+                   (APCP, TMP 2m, RH 2m) via requisições HTTP com Range,
+                   usando o índice .idx (~2 MB por horário). É o "fast
+                   download method" da NOAA, no espelho AWS.
+  --metodo nomads  o mesmo "fast download method", direto no HTTPS do
+                   NOMADS (nomads.ncep.noaa.gov/pub/...). Use se o AWS
+                   estiver bloqueado na sua rede.
+  --metodo filtro  "grib filter" do NOMADS (recorte de variáveis/região
+                   no servidor; URL configurável via --url-filtro).
+                   Documentação: nomads.ncep.noaa.gov/info.php?page=gribfilter
+
+Decodificação GRIB2: pygrib  ->  python3 -m pip install pygrib
+
+Precipitação diária: o APCP do GFS vem em "baldes" (acumulados de 6 h até
++240 h e de 12 h de +240 h a +384 h). O acumulado diário de cada validade
+é a soma dos baldes que cobrem as 24 h anteriores (--acumulo 24h, padrão)
+ou o dia civil da validade (--acumulo dia). O intervalo de cada balde é
+lido do próprio GRIB — a mistura 6 h/12 h é tratada automaticamente.
+Além de +240 h, só existem validades a cada 12 h (as demais são puladas
+com aviso).
 
 Exemplos:
 
-    # Rodada de hoje 00 UTC, 16 dias, validades a cada 6 h
-    python3 prepara_gfs.py
+    python3 prepara_gfs.py                       # rodada de hoje, 16 dias
+    python3 prepara_gfs.py --data 20260805 --config config.yaml
+    python3 prepara_gfs.py --simular             # só lista o plano
 
-    # Rodada específica, domínio e destino do config.yaml
-    python3 prepara_gfs.py --data 20260804 --config config.yaml
-
-    # Só listar o que seria feito
-    python3 prepara_gfs.py --simular
-
-Requisitos: numpy, xarray, netCDF4 (com DAP — padrão nos wheels do pip).
+Requisitos: numpy, xarray, netCDF4, pygrib.
 """
 
 import argparse
+import concurrent.futures
 import datetime as dt
 import os
+import re
 import sys
+import tempfile
 import time
+import urllib.request
 
 import numpy as np
 
-# Domínio padrão: o mesmo do IMERG do pipeline (América do Sul/Central).
 DOMINIO_PADRAO = "-60.05,29.95,-114.95,-30.05"   # latS,latN,lonW,lonE
-URL_PADRAO = "https://nomads.ncep.noaa.gov/dods/gfs_0p25/gfs{data}/gfs_0p25_{rodada}z"
+
+URL_S3 = ("https://noaa-gfs-bdp-pds.s3.amazonaws.com/"
+          "gfs.{data}/{rodada}/atmos/gfs.t{rodada}z.pgrb2.0p25.f{fff}")
+URL_NOMADS_PUB = ("https://nomads.ncep.noaa.gov/pub/data/nccf/com/gfs/prod/"
+                  "gfs.{data}/{rodada}/atmos/gfs.t{rodada}z.pgrb2.0p25.f{fff}")
+URL_FILTRO = ("https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl"
+              "?dir=%2Fgfs.{data}%2F{rodada}%2Fatmos"
+              "&file=gfs.t{rodada}z.pgrb2.0p25.f{fff}"
+              "&var_APCP=on&var_TMP=on&var_RH=on"
+              "&lev_surface=on&lev_2_m_above_ground=on"
+              "&subregion=&toplat={latN}&bottomlat={latS}"
+              "&leftlon={lonW360}&rightlon={lonE360}")
+
 TENTATIVAS = 4
 
 
 # ---------------------------------------------------------------------------
-# Funções puras (testáveis sem rede)
+# Funções puras (testáveis sem rede e sem pygrib)
 # ---------------------------------------------------------------------------
 
-def indices_dominio(lat, lon, lat_s, lat_n, lon_w, lon_e):
-    """Índices (fatias) do domínio pedido nas coordenadas do GFS.
+def fhoras_disponiveis(horas_max):
+    """Horas de previsão com arquivo no GFS: de 6 em 6 h até +240 h e de
+    12 em 12 h de +252 h a +384 h."""
+    fhoras = list(range(6, min(horas_max, 240) + 1, 6))
+    if horas_max > 240:
+        fhoras += list(range(252, min(horas_max, 384) + 1, 12))
+    return fhoras
 
-    A longitude do GFS é 0–360; o domínio pode vir em -180..180.
-    Retorna (ilat0, ilat1, ilon0, ilon1) para fatias [i0:i1].
+
+def filtra_validades(validades):
+    """Remove (com aviso) validades sem arquivo no GFS (> +240 h fora do
+    passo de 12 h) e além do alcance (+384 h)."""
+    ok, puladas = [], []
+    for v in validades:
+        if v > 384 or (v > 240 and v % 12 != 0):
+            puladas.append(v)
+        else:
+            ok.append(v)
+    return ok, puladas
+
+
+_RE_FAIXA = re.compile(r"(\d+)-(\d+)\s+hour\s+acc")
+
+
+def parse_faixa_acumulo(texto):
+    """Extrai (início, fim) em horas de um texto tipo '234-240 hour acc fcst'."""
+    m = _RE_FAIXA.search(texto)
+    if not m:
+        return None
+    return int(m.group(1)), int(m.group(2))
+
+
+def parse_idx(texto):
+    """Interpreta um arquivo .idx do GFS.
+
+    Cada linha: num:offset:d=YYYYMMDDHH:VAR:NIVEL:DESCRICAO:
+    Retorna lista de dicts com var, nivel, descricao, ini e fim (bytes;
+    fim é None na última mensagem).
     """
-    lon360_w = lon_w % 360.0
-    lon360_e = lon_e % 360.0
+    entradas = []
+    for linha in texto.strip().splitlines():
+        p = linha.split(":")
+        if len(p) < 6:
+            continue
+        entradas.append({"ini": int(p[1]), "var": p[3], "nivel": p[4],
+                         "descricao": p[5], "fim": None})
+    for i in range(len(entradas) - 1):
+        entradas[i]["fim"] = entradas[i + 1]["ini"] - 1
+    return entradas
+
+
+def acha_mensagens(idx, alvos):
+    """Localiza no índice as mensagens pedidas.
+
+    ``alvos``: lista de (var, nivel, trecho_descricao_ou_None).
+    Retorna a lista de entradas correspondentes (uma por alvo).
+    """
+    achadas = []
+    for var, nivel, trecho in alvos:
+        cand = [e for e in idx if e["var"] == var and e["nivel"] == nivel
+                and (trecho is None or trecho in e["descricao"])]
+        if not cand:
+            raise RuntimeError(f"Mensagem {var}/{nivel} não encontrada no .idx")
+        achadas.append(cand[0])
+    return achadas
+
+
+def soma_janela(baldes, valid_h, acumulo="24h"):
+    """Soma os baldes de precipitação que cobrem a janela diária da validade.
+
+    ``baldes``: lista de ((ini_h, fim_h), campo 2D). A janela é
+    (valid_h-24, valid_h] no modo "24h" (limitada ao início da rodada) ou
+    o dia civil no modo "dia". Os baldes do GFS particionam o tempo, então
+    a soma dos que caem inteiramente na janela cobre a janela.
+    """
+    if acumulo == "24h":
+        ini_j = max(0, valid_h - 24)
+    elif acumulo == "dia":
+        ini_j = valid_h - 24 if valid_h % 24 == 0 \
+            else ((valid_h - 1) // 24) * 24
+        ini_j = max(0, ini_j)
+    else:
+        raise ValueError(f"Acúmulo desconhecido: {acumulo}")
+
+    total = None
+    cobertos = []
+    for (a, b), campo in baldes:
+        if a >= ini_j and b <= valid_h:
+            total = campo.copy() if total is None else total + campo
+            cobertos.append((a, b))
+    if total is None:
+        raise RuntimeError(
+            f"Nenhum balde de precipitação cobre a janela ({ini_j},{valid_h}].")
+    return total, cobertos
+
+
+def indices_dominio(lat, lon, lat_s, lat_n, lon_w, lon_e):
+    """Fatias do domínio pedido (lat pode ser decrescente; lon do GFS é
+    0–360 e o domínio pode vir em -180..180)."""
+    lon360_w, lon360_e = lon_w % 360.0, lon_e % 360.0
     if lon360_w > lon360_e:
-        raise ValueError("Domínio de longitude cruza o meridiano 0/360 — "
-                         "não suportado (divida em dois domínios).")
+        raise ValueError("Domínio de longitude cruza o meridiano 0/360.")
     ilat = np.nonzero((lat >= lat_s) & (lat <= lat_n))[0]
     ilon = np.nonzero((lon >= lon360_w) & (lon <= lon360_e))[0]
     if ilat.size == 0 or ilon.size == 0:
@@ -75,76 +192,117 @@ def indices_dominio(lat, lon, lat_s, lat_n, lon_w, lon_e):
     return int(ilat[0]), int(ilat[-1]) + 1, int(ilon[0]), int(ilon[-1]) + 1
 
 
-def horas_dos_baldes(valid_h, acumulo="24h"):
-    """Horas de previsão (múltiplas de 6) cujos baldes de 6 h compõem o
-    acumulado diário da validade ``valid_h`` (horas desde a rodada).
+# ---------------------------------------------------------------------------
+# Download (urllib, com tentativas)
+# ---------------------------------------------------------------------------
 
-    - "24h": baldes que terminam em (valid_h-18, valid_h-12, valid_h-6,
-      valid_h), limitados ao início da rodada;
-    - "dia": baldes desde as 00 UTC do dia da validade (para rodada 00 UTC,
-      equivale aos baldes após o último múltiplo de 24 h).
-    """
-    if valid_h % 6 != 0:
-        raise ValueError(f"Validade {valid_h}h não é múltipla de 6 h.")
-    if acumulo == "24h":
-        inicio = max(0, valid_h - 24)
-    elif acumulo == "dia":
-        inicio = ((valid_h - 1) // 24) * 24 if valid_h % 24 != 0 \
-            else valid_h - 24
-        inicio = max(0, inicio)
-    else:
-        raise ValueError(f"Acúmulo desconhecido: {acumulo}")
-    return list(range(inicio + 6, valid_h + 1, 6))
+def _http(url, faixa=None, timeout=120):
+    ultimo = None
+    for tentativa in range(1, TENTATIVAS + 1):
+        try:
+            req = urllib.request.Request(url)
+            req.add_header("User-Agent", "prepara_gfs/2.0 (INPE)")
+            if faixa:
+                req.add_header("Range", f"bytes={faixa[0]}-{faixa[1]}")
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                dados = r.read()
+            if dados[:6].lower() in (b"<html>", b"<!doct"):
+                raise RuntimeError("o servidor devolveu HTML (erro/aviso) "
+                                   "em vez de dados")
+            return dados
+        except Exception as exc:  # noqa: BLE001
+            ultimo = exc
+            espera = 20 * tentativa
+            print(f"  {url.split('/')[-1]}: tentativa {tentativa}/"
+                  f"{TENTATIVAS} falhou ({exc}); aguardando {espera}s",
+                  file=sys.stderr)
+            time.sleep(espera)
+    raise RuntimeError(f"Falha definitiva em {url}: {ultimo}")
 
 
-def soma_baldes(apcp, horas_eixo, valid_h, acumulo="24h"):
-    """Soma os baldes de 6 h do campo ``apcp`` (nt, nlat, nlon) para obter
-    o acumulado diário (mm) da validade ``valid_h``.
+def baixa_fhora(metodo, data, rodada, fhora, dominio):
+    """Baixa as mensagens GRIB (APCP, TMP 2m, RH 2m) de um horário de
+    previsão e devolve os bytes GRIB."""
+    fff = f"{fhora:03d}"
+    if metodo in ("s3", "nomads"):
+        modelo_url = URL_S3 if metodo == "s3" else URL_NOMADS_PUB
+        url = modelo_url.format(data=data, rodada=rodada, fff=fff)
+        idx = parse_idx(_http(url + ".idx").decode())
+        alvos = [("APCP", "surface", None),
+                 ("TMP", "2 m above ground", None),
+                 ("RH", "2 m above ground", None)]
+        pedacos = []
+        for e in acha_mensagens(idx, alvos):
+            fim = e["fim"] if e["fim"] is not None else e["ini"] + 10_000_000
+            pedacos.append(_http(url, faixa=(e["ini"], fim)))
+        return b"".join(pedacos)
 
-    ``horas_eixo`` são as horas de previsão de cada índice do eixo tempo.
-    """
-    alvos = horas_dos_baldes(valid_h, acumulo)
-    idx = [int(np.nonzero(horas_eixo == h)[0][0]) for h in alvos]
-    return apcp[idx].sum(axis=0)
+    # metodo == "filtro": o recorte de variáveis/região é feito no servidor
+    lat_s, lat_n, lon_w, lon_e = dominio
+    url = URL_FILTRO.format(data=data, rodada=rodada, fff=fff,
+                            latN=lat_n, latS=lat_s,
+                            lonW360=lon_w % 360.0, lonE360=lon_e % 360.0)
+    return _http(url)
 
 
 # ---------------------------------------------------------------------------
-# Download via OpenDAP
+# Decodificação GRIB2 (pygrib)
 # ---------------------------------------------------------------------------
 
-def abre_dataset(url):
-    import xarray as xr
-    ultimo_erro = None
-    for tentativa in range(1, TENTATIVAS + 1):
-        try:
-            return xr.open_dataset(url)
-        except Exception as exc:  # noqa: BLE001
-            ultimo_erro = exc
-            espera = 30 * tentativa
-            print(f"Tentativa {tentativa}/{TENTATIVAS} falhou: {exc}\n"
-                  f"Aguardando {espera}s...", file=sys.stderr)
-            time.sleep(espera)
-    raise RuntimeError(f"Não foi possível abrir {url}: {ultimo_erro}")
+def decodifica_grib(dados_grib, dominio):
+    """Decodifica as mensagens GRIB e recorta o domínio.
 
+    Retorna (prec_baldes, t2m, rh2m, lat_rec, lon_rec_out):
+      prec_baldes = lista de ((ini_h, fim_h), campo 2D)
+      lat_rec crescente (sul->norte); lon em -180..180.
+    """
+    import pygrib
 
-def baixa_variavel(ds, nome, it0, it1, ilat, ilon, passo_t=1):
-    """Baixa uma variável do dataset DAP em uma única requisição."""
-    ultimo_erro = None
-    for tentativa in range(1, TENTATIVAS + 1):
-        try:
-            var = ds[nome].isel(
-                time=slice(it0, it1, passo_t),
-                lat=slice(ilat[0], ilat[1]),
-                lon=slice(ilon[0], ilon[1]),
-            )
-            return np.asarray(var.values, dtype=np.float32)
-        except Exception as exc:  # noqa: BLE001
-            ultimo_erro = exc
-            espera = 30 * tentativa
-            print(f"Download de {nome}: tentativa {tentativa}/{TENTATIVAS} "
-                  f"falhou: {exc}\nAguardando {espera}s...", file=sys.stderr)
-            time.sleep(espera)
-    raise RuntimeError(f"Falha ao baixar {nome}: {ultimo_erro}")
+    with tempfile.NamedTemporaryFile(suffix=".grib2", delete=False) as f:
+        f.write(dados_grib)
+        caminho = f.name
+    try:
+        grbs = pygrib.open(caminho)
+        prec_baldes = []
+        t2m = rh2m = None
+        lat_rec = lon_rec = None
+        for g in grbs:
+            lats, lons = g.latlons()
+            lat1d = lats[:, 0]
+            lon1d = lons[0, :]
+            ila0, ila1, ilo0, ilo1 = indices_dominio(
+                lat1d, lon1d, *dominio)
+            campo = np.asarray(g.values[ila0:ila1, ilo0:ilo1],
+                               dtype=np.float32)
+            la = lat1d[ila0:ila1]
+            lo = lon1d[ilo0:ilo1]
+            if la[0] > la[-1]:                    # norte->sul: inverte
+                la = la[::-1]
+                campo = campo[::-1, :]
+            if lat_rec is None:
+                lat_rec, lon_rec = la, lo
+
+            nome = g.shortName.upper()
+            if nome == "APCP" or g.parameterName.lower().startswith("total precip"):
+                ini = int(getattr(g, "startStep", 0))
+                fim = int(getattr(g, "endStep", 0))
+                prec_baldes.append(((ini, fim), campo))
+            elif nome in ("2T", "T", "TMP") and "2" in str(g.level):
+                t2m = campo
+            elif nome in ("2R", "R", "RH") and "2" in str(g.level):
+                rh2m = campo
+            elif g.parameterName.lower().startswith("temperature"):
+                t2m = campo
+            elif "humidity" in g.parameterName.lower():
+                rh2m = campo
+        grbs.close()
+    finally:
+        os.unlink(caminho)
+
+    if t2m is None or rh2m is None or not prec_baldes:
+        raise RuntimeError("GRIB incompleto: APCP/TMP/RH não encontrados.")
+    lon_out = np.where(lon_rec > 180.0, lon_rec - 360.0, lon_rec)
+    return prec_baldes, t2m, rh2m, lat_rec, lon_out
 
 
 # ---------------------------------------------------------------------------
@@ -161,12 +319,12 @@ def grava_netcdf(caminho, variaveis, lat, lon, valida_dt, sobrescrever):
          for nome, dados in variaveis.items()},
         coords={
             "time": [valida_dt],
-            "lat": ("lat", lat, {"standard_name": "latitude",
-                                 "units": "degrees_north"}),
-            "lon": ("lon", lon, {"standard_name": "longitude",
-                                 "units": "degrees_east"}),
+            "lat": ("lat", np.asarray(lat, dtype=np.float64),
+                    {"standard_name": "latitude", "units": "degrees_north"}),
+            "lon": ("lon", np.asarray(lon, dtype=np.float64),
+                    {"standard_name": "longitude", "units": "degrees_east"}),
         },
-        attrs={"source": "GFS 0.25 deg (NOMADS/NCEP) - prepara_gfs.py",
+        attrs={"source": "GFS 0.25 deg (NOAA) - prepara_gfs.py v2",
                "history": f"gerado em {dt.datetime.now():%Y-%m-%d %H:%M}"},
     )
     enc = {nome: {"dtype": "float32", "zlib": True, "complevel": 4}
@@ -183,11 +341,12 @@ def grava_netcdf(caminho, variaveis, lat, lon, valida_dt, sobrescrever):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Baixa o GFS (NOMADS) e prepara as entradas do RF.")
+        description="Baixa o GFS (AWS S3 ou grib filter) e prepara as "
+                    "entradas do RF.")
     parser.add_argument("--data", default=None,
-                        help="Data da rodada YYYYMMDD (padrão: hoje).")
-    parser.add_argument("--rodada", default="00", choices=["00", "06", "12", "18"],
-                        help="Hora da rodada (padrão: 00).")
+                        help="Data da rodada YYYYMMDD (padrão: hoje UTC).")
+    parser.add_argument("--rodada", default="00",
+                        choices=["00", "06", "12", "18"])
     parser.add_argument("--dias", type=int, default=16,
                         help="Alcance em dias (padrão: 16; máx. do GFS).")
     parser.add_argument("--passo", type=int, default=6,
@@ -195,136 +354,130 @@ def main():
     parser.add_argument("--dominio", default=DOMINIO_PADRAO,
                         help=f"latS,latN,lonW,lonE (padrão: {DOMINIO_PADRAO}).")
     parser.add_argument("--base", default=None,
-                        help="Diretório base do modelo (padrão: o do config "
-                             "ou o da produção).")
+                        help="Diretório base do modelo.")
     parser.add_argument("--config", default=None,
                         help="config.yaml do pipeline (usa 'base' de lá).")
-    parser.add_argument("--acumulo", default="24h", choices=["24h", "dia"],
-                        help="Precipitação diária: últimas 24 h (padrão) ou "
-                             "desde as 00 UTC do dia da validade.")
-    parser.add_argument("--url", default=URL_PADRAO,
-                        help="Modelo de URL OpenDAP ({data}, {rodada}).")
-    parser.add_argument("--sobrescrever", action="store_true",
-                        help="Regrava arquivos que já existem.")
-    parser.add_argument("--simular", action="store_true",
-                        help="Só lista o que seria baixado/gerado.")
+    parser.add_argument("--acumulo", default="24h", choices=["24h", "dia"])
+    parser.add_argument("--metodo", default="s3",
+                        choices=["s3", "nomads", "filtro"],
+                        help="s3 = AWS Open Data (padrão); nomads = fast "
+                             "download no HTTPS do NOMADS; filtro = grib "
+                             "filter do NOMADS.")
+    parser.add_argument("--url-filtro", default=None,
+                        help="Modelo de URL do grib filter, se o padrão "
+                             "mudar (marcadores {data},{rodada},{fff},"
+                             "{latN},{latS},{lonW360},{lonE360}).")
+    parser.add_argument("--jobs", type=int, default=4,
+                        help="Downloads simultâneos (padrão: 4).")
+    parser.add_argument("--sobrescrever", action="store_true")
+    parser.add_argument("--simular", action="store_true")
     args = parser.parse_args()
+
+    global URL_FILTRO
+    if args.url_filtro:
+        URL_FILTRO = args.url_filtro
 
     import rf_config
     cfg = rf_config.carrega(args.config) if args.config else rf_config.padrao()
     base = (args.base or cfg["base"]).rstrip("/")
 
-    if args.data:
-        data = args.data
-    else:
-        data = dt.datetime.utcnow().strftime("%Y%m%d")
+    data = args.data or dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d")
     modelo = data + args.rodada
     inicio = dt.datetime.strptime(modelo, "%Y%m%d%H")
-
-    lat_s, lat_n, lon_w, lon_e = (float(x) for x in args.dominio.split(","))
+    dominio = tuple(float(x) for x in args.dominio.split(","))
 
     dirout = f"{base}/data/output/2.2/GFS/netcdf/{modelo}"
-    url = args.url.format(data=data, rodada=args.rodada)
 
-    validades = list(range(args.passo, args.dias * 24 + 1, args.passo))
+    validades, puladas = filtra_validades(
+        list(range(args.passo, args.dias * 24 + 1, args.passo)))
+    fhoras = fhoras_disponiveis(validades[-1])
 
-    print(f"Rodada:  {modelo}")
-    print(f"URL:     {url}")
+    print(f"Rodada:  {modelo}   método: {args.metodo}")
     print(f"Saída:   {dirout}")
-    print(f"Validades: +{validades[0]}h a +{validades[-1]}h "
-          f"(passo {args.passo}h, {len(validades)} arquivos de cada tipo)")
-    print(f"Domínio: lat [{lat_s}, {lat_n}], lon [{lon_w}, {lon_e}] "
-          f"| acúmulo: {args.acumulo}")
+    print(f"Validades: {len(validades)} (+{validades[0]}h a "
+          f"+{validades[-1]}h)"
+          + (f" | puladas (sem arquivo no GFS): "
+             f"{','.join('+'+str(v)+'h' for v in puladas)}" if puladas else ""))
+    print(f"Arquivos GRIB a baixar: {len(fhoras)} horários "
+          f"(~2 MB cada no método s3)")
+    print(f"Domínio: lat [{dominio[0]}, {dominio[1]}], "
+          f"lon [{dominio[2]}, {dominio[3]}] | acúmulo: {args.acumulo}")
 
     if args.simular:
-        for h in validades[:3] + ["..."] + validades[-2:]:
-            if h == "...":
-                print("  ...")
-                continue
-            v = (inicio + dt.timedelta(hours=h)).strftime("%Y%m%d%H")
-            print(f"  GFS.PREV.PREC.{modelo}.{v}.nc + "
-                  f"GFS.PREV.TEMP2m.RH2m.{modelo}.{v}.nc")
+        exemplo = {"s3": URL_S3, "nomads": URL_NOMADS_PUB,
+                   "filtro": URL_FILTRO}[args.metodo]
+        print("\nExemplo de URL:")
+        print("  " + exemplo.format(data=data, rodada=args.rodada, fff="006",
+                                    latN=dominio[1], latS=dominio[0],
+                                    lonW360=dominio[2] % 360,
+                                    lonE360=dominio[3] % 360))
         return
 
+    try:
+        import pygrib  # noqa: F401
+    except ImportError:
+        sys.exit("Erro: pygrib não instalado. Rode: "
+                 "python3 -m pip install pygrib")
+
     os.makedirs(dirout, exist_ok=True)
-
-    # -----------------------------------------------------------------
-    # Abre o dataset remoto e define os recortes
-    # -----------------------------------------------------------------
-    print("\nAbrindo o dataset remoto (OpenDAP)...")
-    ds = abre_dataset(url)
-
-    lat = np.asarray(ds["lat"].values, dtype=np.float64)
-    lon = np.asarray(ds["lon"].values, dtype=np.float64)
-    ila0, ila1, ilo0, ilo1 = indices_dominio(lat, lon, lat_s, lat_n,
-                                             lon_w, lon_e)
-    lat_rec = lat[ila0:ila1]
-    lon_rec = lon[ilo0:ilo1]
-    lon_rec_out = np.where(lon_rec > 180.0, lon_rec - 360.0, lon_rec)
-
-    # Eixo de tempo do dataset em horas de previsão.
-    tempos = ds["time"].values
-    horas_eixo = ((tempos - np.datetime64(inicio)) /
-                  np.timedelta64(1, "h")).astype(int)
-    # Índices dos tempos de 6 em 6 h até o alcance pedido.
-    precisa = sorted(set(h for v in validades
-                         for h in horas_dos_baldes(v, args.acumulo))
-                     | set(validades))
-    if max(precisa) > horas_eixo.max():
-        sys.exit(f"Erro: alcance pedido (+{max(precisa)}h) além do "
-                 f"disponível no GFS (+{horas_eixo.max()}h).")
-    it6 = np.nonzero((horas_eixo % 6 == 0) & (horas_eixo > 0)
-                     & (horas_eixo <= max(precisa)))[0]
-    it0, it1 = int(it6[0]), int(it6[-1]) + 1
-    passo_t = int(np.diff(it6).min()) if it6.size > 1 else 1
-    horas_6h = horas_eixo[it0:it1:passo_t]
-
-    # -----------------------------------------------------------------
-    # Baixa as 3 variáveis (uma requisição por variável)
-    # -----------------------------------------------------------------
     t0 = time.time()
-    print("Baixando apcpsfc (precipitação em baldes de 6 h)...")
-    apcp = baixa_variavel(ds, "apcpsfc", it0, it1, (ila0, ila1),
-                          (ilo0, ilo1), passo_t)
-    print("Baixando tmp2m (temperatura a 2 m)...")
-    t2m = baixa_variavel(ds, "tmp2m", it0, it1, (ila0, ila1),
-                         (ilo0, ilo1), passo_t)
-    print("Baixando rh2m (umidade relativa a 2 m)...")
-    rh2m = baixa_variavel(ds, "rh2m", it0, it1, (ila0, ila1),
-                          (ilo0, ilo1), passo_t)
-    ds.close()
-    print(f"Download concluído em {time.time()-t0:.0f}s "
-          f"({apcp.nbytes*3/1e6:.0f} MB).")
+
+    # -----------------------------------------------------------------
+    # Baixa e decodifica cada horário de previsão (em paralelo)
+    # -----------------------------------------------------------------
+    resultados = {}
+
+    def processa(fhora):
+        bruto = baixa_fhora(args.metodo, data, args.rodada, fhora, dominio)
+        return fhora, decodifica_grib(bruto, dominio)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as ex:
+        futuros = [ex.submit(processa, h) for h in fhoras]
+        feitos = 0
+        for fut in concurrent.futures.as_completed(futuros):
+            fhora, res = fut.result()
+            resultados[fhora] = res
+            feitos += 1
+            if feitos % 10 == 0 or feitos == len(fhoras):
+                print(f"  baixados {feitos}/{len(fhoras)} horários "
+                      f"({time.time()-t0:.0f}s)")
+
+    lat_rec = resultados[fhoras[0]][3]
+    lon_rec = resultados[fhoras[0]][4]
+
+    # Todos os baldes de precipitação, ordenados
+    baldes = sorted(
+        (faixa_campo for h in fhoras for faixa_campo in resultados[h][0]),
+        key=lambda fc: fc[0])
 
     # -----------------------------------------------------------------
     # Gera os arquivos por validade
     # -----------------------------------------------------------------
     gerados = pulados = 0
-    for v_h in validades:
-        valida_dt = inicio + dt.timedelta(hours=v_h)
+    for v in validades:
+        valida_dt = inicio + dt.timedelta(hours=v)
         valida = valida_dt.strftime("%Y%m%d%H")
-        iv = int(np.nonzero(horas_6h == v_h)[0][0])
 
-        prec_dia = soma_baldes(apcp, horas_6h, v_h, args.acumulo)
+        prec_dia, _ = soma_janela(baldes, v, args.acumulo)
+        _, t2m, rh2m, _, _ = resultados[v]
 
         novo1 = grava_netcdf(
             os.path.join(dirout, f"GFS.PREV.PREC.{modelo}.{valida}.nc"),
-            {"prec": prec_dia}, lat_rec, lon_rec_out, valida_dt,
+            {"prec": prec_dia}, lat_rec, lon_rec, valida_dt,
             args.sobrescrever)
         novo2 = grava_netcdf(
             os.path.join(dirout,
                          f"GFS.PREV.TEMP2m.RH2m.{modelo}.{valida}.nc"),
-            {"TEMP2m": t2m[iv], "RH2m": rh2m[iv]},
-            lat_rec, lon_rec_out, valida_dt, args.sobrescrever)
+            {"TEMP2m": t2m, "RH2m": rh2m},
+            lat_rec, lon_rec, valida_dt, args.sobrescrever)
 
         if novo1 or novo2:
             gerados += 1
-            print(f"  {valida}  ok")
         else:
             pulados += 1
 
-    print(f"\nConcluído: {gerados} validades gravadas, {pulados} já "
-          f"existiam em {dirout}")
+    print(f"\nConcluído em {time.time()-t0:.0f}s: {gerados} validades "
+          f"gravadas, {pulados} já existiam em {dirout}")
 
 
 if __name__ == "__main__":

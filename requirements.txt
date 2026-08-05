@@ -3,6 +3,7 @@ xarray
 netCDF4
 rasterio
 pyyaml
+pygrib     # leitura GRIB2 do prepara_gfs.py
 
 # apenas para o teste de validacao (teste_rf.py)
 scipy

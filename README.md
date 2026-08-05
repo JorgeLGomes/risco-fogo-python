@@ -12,9 +12,13 @@ rf_previsto_1_5dias.py        # Produto diário: 19 previsões (+6h até +4d 18U
 rf_previsto_1_2_semanas.py    # Produto semanal: 2 previsões (+7 e +14 dias, 18UTC)
 rf_previsto.py                # Script genérico: qualquer horizonte e fonte (GFS ~16d; Eta/BESM até 13 meses)
 rf_fontes.py                  # Camada de fontes: config por fonte, agregação 1h/12h/1d, série IMERG+previsão
+rf_config.py                  # Configuração YAML dos dados de entrada (--config)
+prepara_gfs.py                # Download do GFS (fast download .idx / grib filter — pós-SCN 25-81)
 teste_rf.py                   # Teste de validação (dados sintéticos + referência fiel ao NCL)
 teste_rf_previsto.py          # Teste de ponta a ponta do script genérico
 teste_rf_multifonte.py        # Teste do modo multifonte (Eta 13m, BESM 12h, fonte via JSON)
+teste_prepara_gfs.py          # Teste do preparo do GFS (idx, baldes 6h/12h)
+config_exemplo.yaml           # Modelo comentado do arquivo de configuração
 requirements.txt              # Dependências Python
 docs/                         # Relatório de conversão e manual do usuário (md, docx, pdf)
 originais/                    # Scripts bash+NCL originais, mantidos para referência
@@ -40,6 +44,10 @@ python3 rf_previsto.py --de 6h --ate 4d18h --passo 6h
 # Multifonte: Eta e BESM até 13 meses
 python3 rf_previsto.py --fonte eta --de 1m --ate 13m --passo 1m
 python3 rf_previsto.py --fonte besm --horizontes 6m
+
+# Preparo das entradas do GFS + configuração via YAML
+python3 prepara_gfs.py --config config.yaml
+python3 rf_previsto.py --config config.yaml
 ```
 
 ## Validação
