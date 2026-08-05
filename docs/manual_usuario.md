@@ -2,17 +2,18 @@
 
 ## Risco de Fogo Previsto em Python — INPE_FireRiskModel v2.2
 
-**Versão:** 1.0 · 4 de agosto de 2026
+**Versão:** 1.3 · 4 de agosto de 2026
 **Substitui:** `rf_previsto_1-5dias_2023.sh` e `rf_previsto_1-2_semanas_2024.sh` (bash + NCL)
 
 ---
 
 ## 1. Visão geral
 
-Este pacote calcula o Risco de Fogo (RF) previsto em resolução de 1 km para a América do Sul, combinando a precipitação observada do IMERG (últimos 119 dias), as previsões do GFS (precipitação, temperatura e umidade relativa a 2 m), o mapa de vegetação (MapBiomas/IGBP) e a topografia (GTOPO30). São dois programas:
+Este pacote calcula o Risco de Fogo (RF) previsto em resolução de 1 km para a América do Sul, combinando a precipitação observada do IMERG (últimos 119 dias), as previsões do GFS (precipitação, temperatura e umidade relativa a 2 m), o mapa de vegetação (MapBiomas/IGBP) e a topografia (GTOPO30). São três programas:
 
 - **`rf_previsto_1_5dias.py`** — gera 19 previsões, de +6 h até +4 dias 18 UTC, a cada 6 horas (produto `RF_PREV`).
 - **`rf_previsto_1_2_semanas.py`** — gera 2 previsões, para +7 e +14 dias às 18 UTC (produto `RF_PREV_SEMANAL`).
+- **`rf_previsto.py`** — script genérico: gera o RF para **qualquer horizonte de previsão** e **diferentes fontes de dados** (GFS, Eta, BESM) informados na linha de comando (seção 5).
 
 Ambos usam o módulo comum **`rf_core.py`** e produzem, para cada horário de previsão, um NetCDF (`RF.PREV.YYYYMMDDHH.nc`) e um GeoTIFF (`RF.PREV.YYYYMMDDHH.tif`), além dos produtos derivados (links D1–D5, cópias T0–T4/T7/T14, fogograma).
 
@@ -23,7 +24,7 @@ Ambos usam o módulo comum **`rf_core.py`** e produzem, para cada horário de pr
 Python 3.9 ou superior e as bibliotecas:
 
 ```bash
-pip install numpy xarray netCDF4 rasterio
+pip install numpy xarray netCDF4 rasterio pyyaml
 ```
 
 Para rodar o teste de validação, instale também o scipy:
@@ -47,16 +48,22 @@ Todos os caminhos partem de `/home/queimadas/INPE_FireRiskModel` e estão defini
 
 ## 3. Instalação
 
-Copie os quatro arquivos para o diretório de scripts do modelo (os três primeiros são obrigatórios; o teste é opcional):
+Copie os arquivos para o diretório de scripts do modelo (os testes são opcionais):
 
 ```
 rf_core.py
+rf_fontes.py
+rf_config.py
+config_exemplo.yaml
 rf_previsto_1_5dias.py
 rf_previsto_1_2_semanas.py
+rf_previsto.py
 teste_rf.py
+teste_rf_previsto.py
+teste_rf_multifonte.py
 ```
 
-Os três arquivos devem ficar no mesmo diretório (os orquestradores fazem `import rf_core`). Se desejar, torne-os executáveis:
+Os scripts devem ficar no mesmo diretório (os orquestradores fazem `import rf_core`). Se desejar, torne-os executáveis:
 
 ```bash
 chmod +x rf_previsto_1_5dias.py rf_previsto_1_2_semanas.py
@@ -99,9 +106,129 @@ Substitua as entradas existentes que chamavam os shell scripts, por exemplo:
 30 6 * * * cd /home/queimadas/INPE_FireRiskModel/scr/risco_fogo/RF_Previsto && /usr/bin/python3 rf_previsto_1_5dias.py >> /home/queimadas/INPE_FireRiskModel/log/cron.rf_prev.log 2>&1
 ```
 
-## 5. Saídas
+## 5. Script genérico para qualquer horizonte (rf_previsto.py)
 
-### 5.1 Produto diário (1 a 5 dias)
+O `rf_previsto.py` generaliza os dois produtos: os horizontes de previsão são informados na linha de comando, contados a partir das 00 UTC da data do modelo. Um horizonte pode ser escrito como `Nh` (horas), `Nd` (dias), `Nm` (meses de calendário), combinações como `4d18h` ou `1m15d`, ou como data/hora absoluta `YYYYMMDDHH`.
+
+### 5.1 Exemplos
+
+```bash
+# Um único horizonte: 36 horas
+python3 rf_previsto.py --horizontes 36h
+
+# Lista de horizontes: 1, 3, 7 e 14 dias às 18 UTC
+python3 rf_previsto.py --horizontes 18h,2d18h,6d18h,13d18h
+
+# Intervalo (equivalente ao produto diário de 1 a 5 dias)
+python3 rf_previsto.py --de 6h --ate 4d18h --passo 6h
+
+# Equivalente ao produto semanal (7 e 14 dias)
+python3 rf_previsto.py --horizontes 7d18h,14d18h --rb-max 0.8 --fallback-gfs
+
+# Data/hora absoluta com reprocessamento
+python3 rf_previsto.py --data-final 20260801 --horizontes 2026080618
+
+# Eta: previsões mensais de 1 a 13 meses
+python3 rf_previsto.py --fonte eta --de 1m --ate 13m --passo 1m
+
+# BESM (acúmulos de 12 h agregados automaticamente): 6 meses
+python3 rf_previsto.py --fonte besm --horizontes 6m
+```
+
+### 5.2 Opções
+
+| Opção | Efeito | Padrão |
+|---|---|---|
+| `--horizontes LISTA` | Horizontes separados por vírgula (`Nh`, `Nd`, `Nm`, combinações ou `YYYYMMDDHH`) | — |
+| `--fonte NOME` | Fonte de previsão: `gfs`, `eta`, `besm` ou outra definida via JSON (seção 5.4) | composição legada (GFS) |
+| `--config-fontes ARQ` | Arquivo JSON que ajusta/acrescenta fontes (nomes de arquivos, variáveis, frequência) | — |
+| `--de` / `--ate` / `--passo` | Intervalo de horizontes relativo (pode ser combinado com `--horizontes`) | passo `6h` |
+| `--rb-max X` | Risco básico máximo (o produto semanal usa 0.8) | 0.9 |
+| `--produto NOME` | Subdiretório de saída em `data/output/2.2/` | `RF_PREV_CUSTOM` |
+| `--base DIR` | Diretório base do modelo (permite rodar fora da produção) | `/home/queimadas/INPE_FireRiskModel` |
+| `--fallback-gfs` | Se o GFS do horário exato não existir, usa o horário anterior do mesmo dia (generaliza a cópia 12 UTC → 18 UTC do produto semanal) | desativado |
+| `--sem-tif` | Gera apenas os NetCDF, sem GeoTIFF | TIF ativado |
+| `--fogograma` | Gera também um único NetCDF com todos os horizontes | desativado |
+| `--data-final YYYYMMDD` / `--jobs N` | Como nos demais scripts | hoje / 4 |
+
+As saídas seguem o mesmo formato dos demais produtos (`RF.PREV.YYYYMMDDHH.nc` e `.tif`), gravadas em `data/output/2.2/<produto>/netcdf|tif/<modelo>/`. O script genérico não gera links D1–D5, cópias T7/T14 nem faz envio a servidores — para os produtos operacionais, use os scripts dedicados.
+
+### 5.3 Fontes de dados e horizontes longos (--fonte)
+
+O alcance depende da fonte de previsão escolhida com `--fonte`:
+
+| Fonte | Alcance | Frequência padrão dos acúmulos |
+|---|---|---|
+| `gfs` | ~16 dias | 1 dia |
+| `eta` | até 13 meses | 1 dia |
+| `besm` | até 13 meses | 1 dia (arquivo único por variável) |
+
+**Sem `--fonte`** o script usa a composição original dos produtos operacionais: 119 dias de IMERG observado + o acumulado do GFS do dia previsto (idêntica aos scripts dedicados, limitada ao alcance do GFS).
+
+**Com `--fonte`** a série diária de 120 tempos que antecede cada data prevista é montada de forma completa: IMERG observado para os dias anteriores à rodada e precipitação **prevista** da fonte para os dias entre a rodada e a data válida. É isso que viabiliza horizontes de semanas a 13 meses (Eta/BESM) — num horizonte de 13 meses, os 120 dias da janela são inteiramente previstos. Os acúmulos da fonte podem vir em qualquer frequência (`1h`, `12h`, `1d`): são somados para o passo diário automaticamente, e campos em grade diferente da do IMERG são regradeados por interpolação bilinear. O horizonte pedido é validado contra o alcance da fonte (`horizonte_max_dias`).
+
+### 5.4 Configuração das fontes (rf_fontes.py e --config-fontes)
+
+Cada fonte é descrita em `rf_fontes.py` por: **layout** dos arquivos (`por_tempo` = um arquivo por horário previsto, como o GFS deste pipeline; `serie` = um arquivo por variável com todos os tempos da rodada, como o BESM T062), subdiretório dos dados, padrões de nome dos arquivos (com os marcadores `{modelo}` e `{valida}`), nomes das variáveis (`var_prec`, `var_temp`, `var_ur`), frequência dos acúmulos (`freq_prec`: `1h`, `12h`, `1d`), tipo de acumulação (`intervalo` = acumulado do próprio intervalo; `desde_inicio` = acumulado desde o início da rodada, caso em que se faz a diferença entre o fim e o início do dia), unidades (`unidade_temp`: `K`/`C`; `unidade_ur`: `%`/`frac`) e alcance (`horizonte_max_dias`).
+
+A fonte `besm` já vem configurada com a **convenção real do BESM T062** (pacote `besm_queimada` do CPTEC): layout `serie` com `tmp_prec.nc` (mm/dia), `tmp_t2mt.nc` (K, média diária) e `tmp_rsmt.nc` (%, 0–100) em `BESM/netcdf/<modelo>/`, 396 tempos diários (rodada+1 até rodada+13 meses), grade gaussiana ~1,875° com latitude norte→sul (invertida automaticamente na leitura). Como a série começa em rodada+1, o dia da própria rodada é preenchido com o IMERG observado, se existir, ou aproximado pelo primeiro dia da série (aviso registrado no log). Os padrões do Eta seguem **provisórios** — ajuste-os à convenção real com um JSON, sem alterar o código:
+
+```json
+{
+  "eta": {
+    "subdir": "ETA/netcdf/{modelo}",
+    "padrao_prec": "ETA.PREV.PREC.{modelo}.{valida}.nc",
+    "padrao_temp_ur": "ETA.PREV.TEMP2m.RH2m.{modelo}.{valida}.nc",
+    "var_prec": "prec",
+    "freq_prec": "1d",
+    "horizonte_max_dias": 396
+  },
+  "besm": { "freq_prec": "12h" }
+}
+```
+
+```bash
+python3 rf_previsto.py --fonte eta --horizontes 13m --config-fontes fontes.json
+```
+
+Os arquivos das fontes devem ser NetCDF em grade regular lat/lon (como os do GFS já pré-processados neste pipeline); saídas nativas (grib do Eta, espectral do BESM) precisam ser convertidas antes. Novas fontes podem ser acrescentadas no mesmo JSON — o nome da chave passa a valer em `--fonte`.
+
+### 5.5 Arquivo de configuração YAML (--config)
+
+O `--config arquivo.yaml` centraliza toda a configuração dos dados de entrada num único arquivo YAML (ou JSON), com três seções opcionais — o que não for informado usa os padrões da produção, e a linha de comando sempre prevalece sobre o arquivo:
+
+| Seção | Conteúdo |
+|---|---|
+| `base` | Diretório base do modelo; os caminhos relativos são ancorados nele |
+| `caminhos` | Onde estão os dados de entrada: `imerg_dir`, `imerg_subpastas` (`{ano}/{mes}`), `imerg_padrao` (`{data}`), `mapa_vegetacao` (`{ano_veg}`), `topografia`, `log` |
+| `fontes` | Mesmas chaves do `--config-fontes`: ajusta ou acrescenta fontes (gfs, eta, besm, ...) |
+| `execucao` | Padrões da linha de comando: `fonte`, `horizontes` ou `de`/`ate`/`passo`, `data_final`, `rb_max`, `produto`, `jobs`, `fallback_gfs`, `sem_tif`, `fogograma` |
+
+```yaml
+base: /home/queimadas/INPE_FireRiskModel
+caminhos:
+  imerg_dir: data/output/2.2/Precipitation-2_2
+  imerg_padrao: "INPE_FireRiskModel_2.2_Precipitation_{data}.nc"
+fontes:
+  besm: { horizonte_max_dias: 396 }
+execucao:
+  fonte: besm
+  de: 1m
+  ate: 13m
+  passo: 1m
+  produto: RF_PREV_BESM
+```
+
+```bash
+python3 rf_previsto.py --config config.yaml               # tudo do arquivo
+python3 rf_previsto.py --config config.yaml --horizontes 6m   # CLI prevalece
+```
+
+O arquivo `config_exemplo.yaml` traz o modelo completo comentado; as seções são validadas na leitura (chave desconhecida gera erro com a lista das válidas). Requer PyYAML (`pip install pyyaml`) — arquivos `.json` funcionam sem ele.
+
+## 6. Saídas
+
+### 6.1 Produto diário (1 a 5 dias)
 
 | Saída | Local |
 |---|---|
@@ -111,20 +238,20 @@ Substitua as entradas existentes que chamavam os shell scripts, por exemplo:
 | Cópias T0–T4 (18 UTC) | `.../tif/<modelo>/RF.PREV.T<d>.YYYYMMDD18.tif` |
 | Fogograma (todos os horários juntos) | `data/output/2.2/fogograma/RF.PREV.<data>00.nc` |
 
-### 5.2 Produto semanal (1 a 2 semanas)
+### 6.2 Produto semanal (1 a 2 semanas)
 
 | Saída | Local |
 |---|---|
 | NetCDF (2 arquivos: +7 e +14 dias) | `data/output/2.2/RF_PREV_SEMANAL/netcdf/<modelo>/` |
 | GeoTIFF T7 e T14 | `.../RF_PREV_SEMANAL/tif/<modelo>/RF.PREV.T7.tif` e `RF.PREV.T14.tif` |
 
-### 5.3 Formato dos arquivos
+### 6.3 Formato dos arquivos
 
 O NetCDF contém a variável `rbf(time, lat, lon)` com o RF em [0, 1], arredondado a 2 casas decimais, valor ausente −999 e eixo de tempo na data/hora da previsão. O GeoTIFF está em EPSG:4326, orientado de norte para sul, com nodata −999, compressão LZW e organização em tiles.
 
 Interpretação usual do RF: mínimo (< 0.15), baixo (0.15–0.40), médio (0.40–0.70), alto (0.70–0.95) e crítico (≥ 0.95).
 
-## 6. Logs e monitoramento
+## 7. Logs e monitoramento
 
 | Log | Conteúdo |
 |---|---|
@@ -134,7 +261,7 @@ Interpretação usual do RF: mínimo (< 0.15), baixo (0.15–0.40), médio (0.40
 
 O código de saída é 0 em caso de sucesso e 1 se alguma previsão não foi gerada (mensagem `PROBLEMA - FALTAM ARQUIVOS EM <dir>`), o que permite monitorar a rodada no cron da mesma forma que antes.
 
-## 7. Solução de problemas
+## 8. Solução de problemas
 
 | Sintoma | Causa provável | O que fazer |
 |---|---|---|
@@ -146,20 +273,22 @@ O código de saída é 0 em caso de sucesso e 1 se alguma previsão não foi ger
 | Falha no envio (lftp/scp) | Rede ou credenciais | O cálculo não é afetado; reenvie manualmente ou rode novamente com envio |
 | `ModuleNotFoundError: rasterio` (ou outra biblioteca) | Dependências não instaladas no Python usado | `pip install numpy xarray netCDF4 rasterio` |
 
-## 8. Teste de validação
+## 9. Testes de validação
 
 Após instalar ou alterar qualquer coisa, rode:
 
 ```bash
-python3 teste_rf.py
+python3 teste_rf.py            # valida o núcleo do cálculo (rf_core)
+python3 teste_rf_previsto.py   # valida o script genérico de ponta a ponta
+python3 teste_rf_multifonte.py # valida o modo multifonte (Eta 13m, BESM 12h, JSON)
 ```
 
-O teste cria dados sintéticos em `/tmp/teste_rf`, executa o cálculo completo e compara com uma implementação de referência fiel ao NCL. A saída esperada termina com `TODOS OS TESTES PASSARAM`.
+O primeiro teste cria dados sintéticos em `/tmp/teste_rf`, executa o cálculo completo e compara com uma implementação de referência fiel ao NCL; a saída esperada termina com `TODOS OS TESTES PASSARAM`. O segundo monta uma árvore com a estrutura de diretórios da produção em `/tmp/teste_generico` e executa o `rf_previsto.py` real em cinco cenários (lista, intervalo, fallback do GFS, horizonte absoluto e falha controlada).
 
-## 9. Segurança
+## 10. Segurança
 
 O script semanal contém as credenciais do `lftp` (herdadas do shell script original) nas constantes `LFTP_USUARIO` e `LFTP_SENHA`. Recomenda-se movê-las para variáveis de ambiente ou para o arquivo `~/.netrc` e restringir a permissão de leitura dos scripts.
 
-## 10. Suporte
+## 11. Suporte
 
 Modelo: Alberto Setzer (alberto.setzer@inpe.br) · Código NCL original: Guilherme Martins (guilherme.martins@inpe.br) · Programa Queimadas: http://www.inpe.br/queimadas/

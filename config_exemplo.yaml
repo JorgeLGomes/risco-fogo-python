@@ -1,0 +1,88 @@
+# ============================================================================
+# Configuração dos dados de entrada do Risco de Fogo (rf_previsto.py)
+# ============================================================================
+# Uso:
+#   python3 rf_previsto.py --config config_exemplo.yaml
+#   python3 rf_previsto.py --config config_exemplo.yaml --horizontes 6m   # a CLI prevalece
+#
+# Todas as seções são opcionais: o que não for informado usa os padrões da
+# produção. Precedência: linha de comando > este arquivo > padrões embutidos.
+# ============================================================================
+
+# Diretório base do modelo. Caminhos relativos abaixo são ancorados aqui.
+base: /home/queimadas/INPE_FireRiskModel
+
+# ----------------------------------------------------------------------------
+# Onde estão os dados de entrada
+# ----------------------------------------------------------------------------
+caminhos:
+  # Precipitação observada diária (IMERG)
+  imerg_dir: data/output/2.2/Precipitation-2_2
+  imerg_subpastas: "{ano}/{mes}"                       # subpastas por data
+  imerg_padrao: "INPE_FireRiskModel_2.2_Precipitation_{data}.nc"   # {data}=YYYYMMDD
+
+  # Mapa de vegetação de 1 km ({ano_veg} é resolvido pela regra do modelo:
+  # anos >= 2020 usam 2019)
+  mapa_vegetacao: data/input/Veg_Map_2020/Merge_MapBiomas_V5_IGBP_C6_{ano_veg}.nc
+
+  # Topografia de 1 km (mesma grade do mapa de vegetação)
+  topografia: data/input/topografia/GeoTOPOAmericaSulCentral_V3.nc
+
+  # Pasta de logs (um arquivo por previsão)
+  log: log
+
+# ----------------------------------------------------------------------------
+# Fontes de previsão (mesmas chaves do rf_fontes.py / --config-fontes)
+# ----------------------------------------------------------------------------
+fontes:
+  # BESM T062 — convenção real do pacote besm_queimada (CPTEC):
+  # um arquivo por variável com todos os tempos diários da rodada.
+  besm:
+    subdir: BESM/netcdf/{modelo}
+    layout: serie                    # "serie" | "por_tempo"
+    padrao_prec: tmp_prec.nc
+    padrao_temp: tmp_t2mt.nc
+    padrao_ur: tmp_rsmt.nc
+    var_prec: prec
+    var_temp: t2mt
+    var_ur: rsmt
+    freq_prec: 1d                    # "1h" | "12h" | "1d"
+    tipo_acumulo: intervalo          # "intervalo" | "desde_inicio"
+    unidade_temp: K                  # "K" | "C"
+    unidade_ur: "%"                  # "%" | "frac"
+    horizonte_max_dias: 396          # 13 meses
+
+  # Eta — padrões PROVISÓRIOS: ajuste à convenção real dos arquivos.
+  eta:
+    subdir: ETA/netcdf/{modelo}
+    layout: por_tempo                # um arquivo por horário previsto
+    padrao_prec: "ETA.PREV.PREC.{modelo}.{valida}.nc"
+    padrao_temp_ur: "ETA.PREV.TEMP2m.RH2m.{modelo}.{valida}.nc"
+    var_prec: prec
+    var_temp: TEMP2m
+    var_ur: RH2m
+    freq_prec: 1d
+    tipo_acumulo: intervalo
+    unidade_temp: K
+    unidade_ur: "%"
+    horizonte_max_dias: 396
+
+  # O GFS já vem configurado por padrão (não precisa aparecer aqui).
+  # Novas fontes podem ser acrescentadas: o nome da chave vale em --fonte.
+
+# ----------------------------------------------------------------------------
+# Padrões de execução (todos podem ser sobrepostos na linha de comando)
+# ----------------------------------------------------------------------------
+execucao:
+  fonte: besm            # gfs | eta | besm | (fonte definida acima)
+  de: 1m                 # início do intervalo de horizontes
+  ate: 13m               # fim do intervalo
+  passo: 1m              # passo (Nh, Nd, Nm)
+  # horizontes: 18h,7d18h,6m    # alternativa ao intervalo (lista)
+  # data_final: "20260804"      # rodada (padrão: hoje)
+  rb_max: 0.9
+  produto: RF_PREV_BESM  # subdiretório de saída em data/output/2.2/
+  jobs: 4
+  fallback_gfs: false
+  sem_tif: false
+  fogograma: false

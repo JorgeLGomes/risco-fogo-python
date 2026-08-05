@@ -227,11 +227,50 @@ def calcula_risco_fogo(arquivo_temp_ur,
     precip, lat_prec, lon_prec = ler_precipitacao(lista_arquivos_prec,
                                                   nome_var_precip)
 
+    return calcula_risco_fogo_dados(
+        precip_invertida=precip,
+        lat_prec=lat_prec, lon_prec=lon_prec,
+        t2m=t2m, ur2m=ur2m,
+        lat_met=lat_gfs, lon_met=lon_gfs,
+        arquivo_mapa_veg=arquivo_mapa_veg,
+        arquivo_topografia=arquivo_topografia,
+        arquivo_saida=arquivo_saida,
+        data_previsao=data_previsao,
+        rb_maximo=rb_maximo,
+        titulo=titulo,
+        log=log,
+    )
+
+
+def calcula_risco_fogo_dados(precip_invertida, lat_prec, lon_prec,
+                             t2m, ur2m, lat_met, lon_met,
+                             arquivo_mapa_veg, arquivo_topografia,
+                             arquivo_saida, data_previsao,
+                             rb_maximo=0.9, titulo=None, log=print):
+    """Calcula o RF a partir de arrays já carregados (qualquer fonte).
+
+    Parameters
+    ----------
+    precip_invertida : ndarray (nd, nlat, nlon)
+        Acumulados diários de precipitação com o TEMPO INVERTIDO
+        (índice 0 = dia previsto/mais recente; último = dia mais antigo),
+        como no NCL original. Use ``precip[::-1]`` se a série estiver em
+        ordem cronológica crescente.
+    t2m, ur2m : ndarray (nlat_met, nlon_met)
+        Temperatura a 2 m em °C e umidade relativa em décimos.
+    lat_met, lon_met : coordenadas 1D da grade de t2m/ur2m.
+    Demais parâmetros como em ``calcula_risco_fogo``.
+    """
+
+    precip = np.asarray(precip_invertida, dtype=np.float32)
+
     nd = precip.shape[0]
     if nd < ND_ESPERADO:
         raise RuntimeError(
             f"Número de tempos de precipitação insuficiente: {nd} "
             f"(esperado {ND_ESPERADO}). Verifique os arquivos faltantes.")
+
+    lat_gfs, lon_gfs = lat_met, lon_met
 
     log("")
     log("Abrindo o arquivo de mapa de vegetação.")

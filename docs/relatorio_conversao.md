@@ -32,14 +32,18 @@ As diferenças entre os dois scripts:
 
 ## 3. Arquitetura convertida
 
-A versão Python é composta por três módulos e um teste:
+A versão Python é composta por quatro programas e dois testes:
 
 | Arquivo | Papel |
 |---|---|
-| `rf_core.py` | Núcleo do cálculo do RF, compartilhado pelos dois scripts. Substitui o script NCL que era gerado via heredoc, além do `cdo` e do `gdal_translate`. |
+| `rf_core.py` | Núcleo do cálculo do RF, compartilhado por todos os scripts. Substitui o script NCL que era gerado via heredoc, além do `cdo` e do `gdal_translate`. |
 | `rf_previsto_1_5dias.py` | Orquestrador equivalente ao `rf_previsto_1-5dias_2023.sh`. |
 | `rf_previsto_1_2_semanas.py` | Orquestrador equivalente ao `rf_previsto_1-2_semanas_2024.sh`. |
+| `rf_previsto.py` | Script genérico: calcula o RF para qualquer horizonte de previsão (lista ou intervalo, inclusive meses) e qualquer fonte de dados (`--fonte gfs|eta|besm`), com rb máximo, produto e diretório base configuráveis e fallback opcional do GFS. |
+| `rf_fontes.py` | Camada de fontes de previsão: configuração por fonte (padrões de nome, variáveis, frequência dos acúmulos 1h/12h/1d, unidades, alcance), agregação para o passo diário e montagem da série de 120 dias misturando IMERG observado e precipitação prevista. |
 | `teste_rf.py` | Teste de validação com dados sintéticos e comparação com implementação de referência fiel ao NCL. |
+| `teste_rf_previsto.py` | Teste de ponta a ponta do script genérico com a estrutura de diretórios da produção reproduzida em `/tmp`. |
+| `teste_rf_multifonte.py` | Teste do modo multifonte: Eta a 13 meses, BESM com acúmulos de 12 h, fonte via JSON com frequência de 1 h e equivalência numérica com o núcleo. |
 
 A geração de scripts NCL temporários foi substituída por uma chamada de função (`rf_core.calcula_risco_fogo`), e o `parallel` por um `ProcessPoolExecutor` da biblioteca padrão, com o mesmo número de processos dos scripts originais (configurável por `--jobs`). O laço de espera com `sleep 600` tornou-se desnecessário: o pool de processos é controlado diretamente e, se alguma previsão falhar, o erro é registrado em log e o script termina com código de saída 1, preservando o contrato do original.
 
@@ -104,6 +108,8 @@ O teste `teste_rf.py` constrói um cenário sintético completo (119 arquivos IM
 4. **Aviso do NCL suprimido** — a mensagem `warning: error attempting to fix non-monotonic aggregation variable` (inofensiva, causada pela inversão do tempo) não existe mais, pois a concatenação é feita em numpy.
 5. **Logs** — cada previsão grava seu log em `log/log.<data_modelo>.<data_previsao>`, como no original.
 6. **Novos parâmetros de linha de comando** — `--data-final YYYYMMDD` (reprocessamento de datas passadas), `--jobs N` e `--sem-envio` (executa sem publicar nos servidores).
+7. **Script genérico de horizontes** — o `rf_previsto.py` (inexistente na versão NCL) permite gerar o RF para qualquer conjunto de horizontes, via `--horizontes 18h,2d18h,7d18h,6m` ou `--de 1m --ate 13m --passo 1m`, com `--rb-max`, `--produto`, `--base`, `--fallback-gfs`, `--sem-tif` e `--fogograma`.
+8. **Múltiplas fontes de previsão** — com `--fonte gfs|eta|besm` (e `--config-fontes` para ajustar padrões de nome, variáveis e frequências via JSON), a série diária de 120 tempos passa a combinar IMERG observado com precipitação prevista da fonte, agregando acúmulos de 1 h/12 h/1 dia para o passo diário e regradeando para a grade do IMERG. Isso estende o alcance do RF de ~16 dias (GFS) para até 13 meses (Eta e BESM).
 
 ## 8. Pontos de atenção
 
