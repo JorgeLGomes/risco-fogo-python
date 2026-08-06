@@ -281,33 +281,50 @@ git commit -m "Muda o base padrao para o diretorio do ian01 e melhora os preparo
 git push origin main
 ```
 
-Por último, a fonte de precipitação observada MSWEP:
+Por último, o MSWEP como fonte de precipitação observada e os ajustes de
+agregação/figuras:
 
 ```powershell
 git add -A
-git commit -m "Adiciona o MSWEP como fonte alternativa de precipitacao observada
+git commit -m "Adiciona o MSWEP como fonte de precipitacao observada e ajusta agregacoes
 
+MSWEP (fonte alternativa a precipitacao observada do IMERG):
 - rf_config: nova secao 'precipitacao' (fonte imerg|mswep, modo in_loco|
   convertido, variavel, dominio), caminhos mswep_* e mswep_conv_*, e as
   funcoes caminho_precipitacao/variavel_precipitacao/recorte_precipitacao/
   sufixo_precipitacao; atalho execucao: precipitacao: mswep
 - rf_core: le_precip_arquivo/le_grade_precip com deteccao automatica da
-  variavel (o MSWEP vem como 'unknown'), recorte do dominio aplicado na
-  leitura (isel preguicoso, a grade global 3600x1800 nunca entra inteira
-  na memoria) e reordenacao de arquivos com longitude 0..360;
-  ler_precipitacao e calcula_risco_fogo aceitam nome_var e recorte
+  variavel (o MSWEP vem como 'unknown'), recorte do dominio e selecao do
+  passo de tempo aplicados ANTES da leitura (a grade global 3600x1800 e o
+  mes inteiro nunca entram na memoria), fatia em vez de vetor de indices
+  quando o recorte e contiguo, e reordenacao de longitude 0..360;
+  ler_precipitacao recusa arquivos com varios passos quando a serie
+  diaria espera um dia por arquivo
 - prepara_mswep.py: converte os arquivos locais do MSWEP para o padrao do
   pipeline (recorte, lat sul->norte, variavel prec), incremental, com
   reserva automatica para o arquivo mensal (jan.nc, feb.nc, ...)
 - rf_observado/fwi_observado/rf_previsto: --precipitacao e
   --modo-precipitacao; produtos ganham o sufixo _MSWEP, sem se misturar
   com as rodadas de referencia com IMERG
-- rf_fontes: a parte observada da serie de 120 dias tambem le a fonte
-  configurada
+- rf_fontes: a parte observada da serie de 120 dias le a fonte configurada
 - teste_mswep.py: deteccao da variavel, recorte (inclusive lon 0..360),
-  conversao, arquivo mensal, config e ponta a ponta (RF observado in loco
-  == convertido; FWI observado com MSWEP)
-- config_mswep.yaml e config_exemplo.yaml; manual v2.6 com a secao 6.9"
+  conversao, arquivo mensal, config, ponta a ponta (RF observado in loco
+  == convertido; FWI com MSWEP) e verificacao com o DADO REAL quando o
+  disco do MSWEP existe (grade 0,1 grau, recorte 901x850, faixa de chuva)
+
+Agregacoes e figuras:
+- --frequencia/--percentil passam a valer sozinhos (sem exigir --media ou
+  --media-mensal) e, nesse caso, agregam o periodo inteiro gerando SO o
+  que foi pedido - vale no RF observado, no RF previsto e no FWI
+- rf_figura: rotulo correto da barra de cores e do titulo nas figuras de
+  frequencia (contagem de dias x percentual) e recusa explicita de
+  misturar frequencia com risco 0-1 na mesma figura/painel
+- teste_rf_observado: figuras de FREQ e P90, e o caso da mistura recusada
+
+Documentacao:
+- config_mswep.yaml (rodada observada com MSWEP) e config_exemplo.yaml
+- manual v2.6: secao 6.9 (MSWEP), 5.7 com frequencia prevista e 6.5
+  ampliada (figuras de frequencia e percentil); README e docx/pdf"
 
 git push origin main
 ```

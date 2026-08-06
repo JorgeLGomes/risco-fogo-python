@@ -191,7 +191,6 @@ def _indices_recorte(la, lo, recorte):
         return None, None
     lat_s, lat_n, lon_w, lon_e = (float(x) for x in recorte)
 
-    crescente = la.size < 2 or la[0] <= la[-1]
     mla = (la >= lat_s) & (la <= lat_n)
     ila = np.nonzero(mla)[0]
 
@@ -208,11 +207,15 @@ def _indices_recorte(la, lo, recorte):
             f"lon {lo180.min():.2f}..{lo180.max():.2f}).")
 
     fatia_lat = slice(int(ila[0]), int(ila[-1]) + 1)
-    del crescente
+    # Caso comum (arquivo em -180..180, como o MSWEP): os índices saem
+    # contíguos e já ordenados — uma FATIA lê muito mais rápido do que um
+    # vetor de índices, que força leitura ponto a ponto na netCDF4.
+    if ilo.size == ilo[-1] - ilo[0] + 1:
+        return fatia_lat, slice(int(ilo[0]), int(ilo[-1]) + 1)
     return fatia_lat, ilo
 
 
-def le_precip_arquivo(caminho, nome_var=None, recorte=None):
+def le_precip_arquivo(caminho, nome_var=None, recorte=None, tempo=None):
     """Lê um arquivo de precipitação diária no padrão do pipeline OU num
     arquivo global bruto (MSWEP), devolvendo (dados[nt,nlat,nlon], lat,
     lon) com a latitude de sul para norte, longitude crescente em
@@ -220,7 +223,11 @@ def le_precip_arquivo(caminho, nome_var=None, recorte=None):
 
     O recorte é aplicado **antes** de carregar os dados (isel preguiçoso),
     de modo que ler o domínio da América do Sul de um arquivo global
-    3600x1800 não traz a grade inteira para a memória."""
+    3600x1800 não traz a grade inteira para a memória.
+
+    ``tempo``: índice (int) do passo a ler em arquivos com vários tempos
+    (ex.: o MSWEP mensal, com 31 passos) — também aplicado antes da
+    leitura, para não trazer o mês inteiro."""
     with xr.open_dataset(caminho, decode_times=False) as ds:
         nome = nome_variavel_precip(ds, nome_var)
         nome_lat = _nome_eixo(ds, NOMES_LAT)
@@ -231,6 +238,9 @@ def le_precip_arquivo(caminho, nome_var=None, recorte=None):
         var = ds[nome]
         if var.dims[-2:] == (nome_lon, nome_lat):     # (time, lon, lat)
             var = var.transpose(..., nome_lat, nome_lon)
+
+        if tempo is not None and var.ndim > 2:
+            var = var.isel({var.dims[0]: slice(int(tempo), int(tempo) + 1)})
 
         fatia_lat, idx_lon = _indices_recorte(la, lo, recorte)
         if fatia_lat is not None:
@@ -290,8 +300,18 @@ def ler_precipitacao(lista_arquivos, nome_var="prec", recorte=None):
     """
     campos = []
     lat = lon = None
+    varios = len(lista_arquivos) > 1
     for arq in lista_arquivos:
         dados, la, lo = le_precip_arquivo(arq, nome_var, recorte)
+
+        if varios and dados.shape[0] > 1:
+            raise RuntimeError(
+                f"{os.path.basename(arq)} tem {dados.shape[0]} passos de "
+                f"tempo, mas a série diária espera UM dia por arquivo. "
+                f"Se estiver apontando para arquivos MENSAIS (jan.nc, "
+                f"feb.nc, ...), converta-os antes com 'python3 "
+                f"prepara_mswep.py --mensal' e use "
+                f"'precipitacao: modo: convertido'.")
 
         if lat is None:
             lat, lon = la, lo                 # grade de referência (1º arquivo)
@@ -813,10 +833,18 @@ def operacoes_pedidas(args):
 
     ``--maximo`` substitui a média; ``--frequencia`` e ``--percentil``
     geram arquivos ADICIONAIS, nos mesmos agrupamentos (período e/ou mês).
+
+    A média (ou o máximo) só entra na lista quando foi realmente pedida
+    (``--media``, ``--media-mensal`` ou ``--maximo``): assim
+    ``--frequencia 0.7`` sozinho gera apenas o campo de frequência, sem
+    arrastar junto uma média que ninguém pediu.
     """
+    quer_base = (getattr(args, "media", False)
+                 or getattr(args, "media_mensal", False)
+                 or getattr(args, "maximo", False))
     base = ("MAXIMO", "maximo", {}) if getattr(args, "maximo", False) \
         else ("MEDIA", "media", {})
-    ops = [base]
+    ops = [base] if quer_base else []
     limiar = getattr(args, "frequencia", None)
     if limiar is not None:
         ops.append((f"FREQ{float(limiar):g}", "frequencia",

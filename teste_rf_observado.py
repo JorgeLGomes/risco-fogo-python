@@ -5,6 +5,7 @@ sintéticos -> RF.OBS diários, incluindo períodos (--dias/--semanas/--meses),
 
 import datetime as dt
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -245,10 +246,42 @@ def teste_figura():
     assert r.returncode == 0, r.stdout + r.stderr
     assert os.path.exists(painel)
 
+    # figuras das agregações de frequência e percentil
+    freq = [f for f in os.listdir(dir_out) if ".FREQ" in f]
+    perc = [f for f in os.listdir(dir_out) if re.search(r"\.P\d+\.", f)]
+    assert freq and perc, (freq, perc)
+
+    for extra, nome in (([], "freq_dias"),
+                        (["--var", "frequencia"], "freq_pct")):
+        alvo = os.path.join(TMP, nome + ".png")
+        r = subprocess.run([sys.executable, "rf_figura.py",
+                            os.path.join(dir_out, freq[0]), *extra,
+                            "--saida", alvo],
+                           capture_output=True, text=True, timeout=600)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert os.path.exists(alvo) and os.path.getsize(alvo) > 10000
+
+    alvo = os.path.join(TMP, "percentil.png")
+    r = subprocess.run([sys.executable, "rf_figura.py",
+                        os.path.join(dir_out, perc[0]), "--saida", alvo],
+                       capture_output=True, text=True, timeout=600)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert os.path.exists(alvo)
+
+    # misturar frequência (contagem) com risco (0–1) na mesma figura é
+    # recusado com mensagem clara — uma figura tem uma só barra de cores
+    r = subprocess.run([sys.executable, "rf_figura.py",
+                        os.path.join(dir_out, freq[0]),
+                        os.path.join(dir_out, perc[0]),
+                        "--painel", "--saida", os.path.join(TMP, "mix.png")],
+                       capture_output=True, text=True, timeout=600)
+    assert r.returncode != 0, r.stdout
+    assert "FREQU" in (r.stdout + r.stderr).upper()
+
     import rf_figura
     cmap, _ = rf_figura.escala()
     assert rf_figura.CORES[0] == "#17b617" and rf_figura.CORES[-1] == "#a70000"
-    print("rf_figura (mapa, painel e paleta oficial do SLD) ok")
+    print("rf_figura (mapa, painel, paleta do SLD, frequencia e percentil) ok")
 
 
 

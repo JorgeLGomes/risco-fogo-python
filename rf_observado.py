@@ -514,8 +514,11 @@ def main():
 def agrega_periodo(args, dias_analise, dir_output_netcdf, hora, inicio, fim):
     """Executa --media, --media-mensal e --mergetime sobre os arquivos
     diários existentes no período."""
-    if not (args.media or args.media_mensal or args.mergetime):
+    operacoes = rf_core.operacoes_pedidas(args)
+    if not operacoes and not args.mergetime:
         return
+    # --frequencia/--percentil sozinhos valem para todo o período
+    faz_periodo = args.media or not args.media_mensal
 
     def caminho_do_dia(dia):
         return os.path.join(
@@ -529,7 +532,7 @@ def agrega_periodo(args, dias_analise, dir_output_netcdf, hora, inicio, fim):
               file=sys.stderr)
         return
 
-    for rotulo, operacao, extra in rf_core.operacoes_pedidas(args):
+    for rotulo, operacao, extra in operacoes:
         if args.media_mensal:
             for (ano, mes), dias_mes in _por_mes(disponiveis):
                 saida = os.path.join(
@@ -543,7 +546,7 @@ def agrega_periodo(args, dias_analise, dir_output_netcdf, hora, inicio, fim):
                 print(f"{rotulo} {ano:04d}-{mes:02d} ({usados} dias): "
                       f"{saida}")
 
-        if args.media:
+        if faz_periodo:
             saida = os.path.join(
                 dir_output_netcdf,
                 f"RF.OBS.{rotulo}.{inicio:%Y%m%d}-{fim:%Y%m%d}.nc")

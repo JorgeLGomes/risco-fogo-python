@@ -250,18 +250,41 @@ def main():
         with xr.open_dataset(caminho, decode_times=False) as ds:
             return {"dias", "frequencia"} & set(ds.data_vars) != set()
 
-    usa_freq = all(_e_frequencia(c) for c in caminhos)
+    quais_freq = [c for c in caminhos if _e_frequencia(c)]
+    usa_freq = len(quais_freq) == len(caminhos)
+    if quais_freq and not usa_freq:
+        # Uma figura tem uma única barra de cores: contagem de dias e risco
+        # em [0,1] não podem dividir a mesma escala sem enganar quem lê.
+        sys.exit(
+            "Erro: os arquivos de FREQUÊNCIA (dias/% acima do limiar) usam "
+            "uma escala de contagem, e os demais campos usam a escala de "
+            "risco 0–1 — não dá para pôr os dois na mesma figura/painel.\n"
+            "  Frequência: "
+            + ", ".join(os.path.basename(c) for c in quais_freq[:3])
+            + ("..." if len(quais_freq) > 3 else "")
+            + "\n  -> gere uma figura para os arquivos FREQ* e outra para "
+              "os demais (médias, percentis, diários).")
+
     usa_fwi = (not usa_freq) and (args.escala_fwi or all(
         os.path.basename(c).upper().startswith("FWI.") for c in caminhos))
 
     campos = []
+    variavel_plotada = None
     for caminho in caminhos:
         dados, lat, lon, atributos = le_campo(caminho, args.var)
         if not args.sem_mascara:
             dados = mascara_oceano(dados, lat, lon)
         rot = rotulo_do_arquivo(caminho, atributos)
-        if usa_fwi or usa_freq or args.var:
-            rot = f"{atributos.get('_variavel', 'FWI')} — {rot}"
+        variavel = atributos.get("_variavel", "FWI")
+        if variavel_plotada is None:
+            variavel_plotada = variavel
+        if usa_freq:
+            # o rótulo já diz "Dias >= L"; aqui basta distinguir a
+            # contagem (dias) do percentual (frequencia)
+            if variavel == "frequencia":
+                rot = rot.replace("Dias ≥", "% dos dias ≥", 1)
+        elif usa_fwi or args.var:
+            rot = f"{variavel} — {rot}"
         campos.append((caminho, dados, lat, lon, rot))
 
     if usa_freq:
@@ -281,8 +304,8 @@ def main():
         if usa_freq:
             cb = fig.colorbar(mapa, ax=eixos, orientation="horizontal",
                               fraction=0.05, pad=0.10, aspect=40)
-            nome = campos[0][4].split(" — ")[0]
-            rotulo_cb = ("Dias acima do limiar" if nome == "dias"
+            rotulo_cb = ("Dias acima do limiar"
+                         if variavel_plotada == "dias"
                          else "Frequência de dias acima do limiar (%)")
             if limiar_txt:
                 rotulo_cb += f"  (limiar {limiar_txt})"

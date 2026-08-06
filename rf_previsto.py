@@ -708,8 +708,11 @@ def agrega_previsoes(args, previsoes, dir_output_netcdf):
     """Executa --media-mensal e --media sobre os arquivos de previsão
     existentes da rodada. Os campos são agrupados pela DATA VÁLIDA de cada
     previsão — com passo diário, o resultado é a média mensal do RF."""
-    if not (args.media or args.media_mensal):
+    operacoes = rf_core.operacoes_pedidas(args)
+    if not operacoes:
         return
+    # --frequencia/--percentil sozinhos valem para toda a rodada
+    faz_periodo = args.media or not args.media_mensal
 
     def caminho(previsao_dt):
         return os.path.join(dir_output_netcdf,
@@ -721,7 +724,7 @@ def agrega_previsoes(args, previsoes, dir_output_netcdf):
               file=sys.stderr)
         return
 
-    for rotulo, operacao, extra in rf_core.operacoes_pedidas(args):
+    for rotulo, operacao, extra in operacoes:
         if args.media_mensal:
             for (ano, mes), do_mes in rf_core.agrupa_por_mes(disponiveis):
                 saida = os.path.join(
@@ -735,7 +738,7 @@ def agrega_previsoes(args, previsoes, dir_output_netcdf):
                 print(f"{rotulo} {ano:04d}-{mes:02d} ({usados} previsões): "
                       f"{saida}")
 
-        if args.media:
+        if faz_periodo:
             saida = os.path.join(
                 dir_output_netcdf,
                 f"RF.PREV.{rotulo}.{disponiveis[0]:%Y%m%d}-"

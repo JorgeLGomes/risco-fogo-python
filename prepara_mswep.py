@@ -104,8 +104,11 @@ def le_dia(caminho, dia, dominio, nome_var=None, mensal=False):
         if idx.size == 0:
             raise ValueError(f"{os.path.basename(caminho)} não contém "
                              f"{dia:%Y-%m-%d}.")
-    dados, lat, lon = rf_core.le_precip_arquivo(caminho, nome_var, dominio)
-    return dados[int(idx[0])], lat, lon
+    # O passo de tempo é selecionado ANTES da leitura: um mês do MSWEP tem
+    # 31 passos globais e só um deles interessa.
+    dados, lat, lon = rf_core.le_precip_arquivo(caminho, nome_var, dominio,
+                                                tempo=int(idx[0]))
+    return dados[0], lat, lon
 
 
 def grava_padrao(caminho, prec, lat, lon, dia, origem, sobrescrever=False):
@@ -237,7 +240,9 @@ def main():
     for d in faltam:
         origem = rf_config.caminho_mswep(base, caminhos, d)
         mensal = args.mensal
-        if not mensal and not os.path.exists(origem):
+        if mensal:                       # --mensal: jan.nc, feb.nc, ...
+            origem = arquivo_mensal(origem, d)
+        elif not os.path.exists(origem):
             alternativa = arquivo_mensal(origem, d)
             if os.path.exists(alternativa):
                 origem, mensal = alternativa, True

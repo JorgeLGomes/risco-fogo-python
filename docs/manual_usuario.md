@@ -297,7 +297,7 @@ Cada horizonte gera o seu `RF.PREV.{data}{hora}.nc`. Para obter o **risco médio
 | `--percentil N` | operação **adicional** | percentil N da distribuição (`RF.PREV.P<N>.*`) |
 | `--so-agrega` | — | não recalcula nada: agrega os arquivos já existentes da rodada |
 
-As opções de agrupamento dizem **sobre o quê** agregar (o mês ou a rodada inteira) e as de operação dizem **como**. `--frequencia` e `--percentil` são acumulativas: pedidas junto com `--media-mensal`, geram, para cada mês, a média **e** os campos de frequência e percentil.
+As opções de agrupamento dizem **sobre o quê** agregar (o mês ou a rodada inteira) e as de operação dizem **como**. `--frequencia` e `--percentil` são acumulativas: pedidas junto com `--media-mensal`, geram, para cada mês, a média **e** os campos de frequência e percentil. Pedidas **sozinhas**, valem para a rodada inteira e produzem só o que foi pedido — `--frequencia 0.7` sem mais nada não gera arquivo de média.
 
 Os campos são agrupados pela **data válida** de cada previsão, e as médias ignoram valores ausentes ponto a ponto (o número de campos usados vai no atributo global `dias_agregados`). As mesmas chaves existem no YAML (`media_mensal`, `media`, `maximo`).
 
@@ -323,6 +323,28 @@ A forma (b) é a recomendada quando o objetivo é a climatologia mensal prevista
 python3 rf_figura.py <saida>/RF.PREV.MEDIA.2026*.nc --painel --colunas 4 \
     --titulo "BESM — Risco de Fogo médio mensal"
 ```
+
+**Frequência prevista.** Na escala sazonal a frequência costuma comunicar melhor que a média: em vez de "o risco médio de setembro é 0,68", diz-se "**26 dos 30 dias** previstos ficam em risco Alto ou Crítico". O caminho é o mesmo, trocando a operação:
+
+```bash
+# Dias (e % dos dias) com RF >= 0,7 em cada mês da rodada sazonal
+python3 rf_previsto.py --fonte besm --de 1d --ate 396d --passo 1d \
+    --media-mensal --frequencia 0.7 --percentil 90 \
+    --produto RF_PREV_BESM --jobs 8 --sem-tif
+
+# Só as agregações, se os diários já existirem
+python3 rf_previsto.py --fonte besm --de 1d --ate 396d --passo 1d \
+    --media-mensal --frequencia 0.7 --so-agrega --produto RF_PREV_BESM
+
+# Figuras: um painel com os meses (a escala é comum aos 13 mapas)
+S=data/output/2.2/RF_PREV_BESM/netcdf/<modelo>
+python3 rf_figura.py "$S/RF.PREV.FREQ0.7.2026*.nc" --painel --colunas 4 \
+    --titulo "BESM — dias com RF >= 0,7" --saida besm_freq.png
+python3 rf_figura.py "$S/RF.PREV.FREQ0.7.2026*.nc" --painel --colunas 4 \
+    --var frequencia --titulo "BESM — % dos dias com RF >= 0,7"
+```
+
+Aplicada às previsões, a frequência é a leitura mais próxima de uma **probabilidade**: com um único membro ela mede a fração de *dias* do mês acima do limiar; com um ensemble (quando os membros do BESM estiverem disponíveis), a mesma conta sobre os membros vira a probabilidade de o mês exceder o limiar.
 
 Atenção ao **passo**: ele tem a mesma unidade dos horizontes e precisa ser compatível com o intervalo — `--de 6h --ate 4d18h --passo 1m` não produz nada útil (o primeiro passo já ultrapassa o fim).
 
@@ -496,6 +518,38 @@ python3 rf_figura.py '.../RF.OBS.202607*18.nc' --painel --colunas 7 --classes
 ```
 
 Opções: `--painel` (vários campos numa figura) com `--colunas`, `--titulo`, `--saida` (arquivo ou pasta), `--dpi`, `--classes` (uma cor por faixa, em vez da rampa — útil para leitura por classe) e `--sem-mascara` (não aplica a máscara de oceano, necessária apenas em campos gerados com `--sem-vegetacao`, que não trazem a máscara d'água). Requer `matplotlib` (e `global-land-mask` para a máscara de oceano).
+
+**Figuras de frequência e de percentil.** São os mesmos comandos — o script reconhece o tipo do arquivo pelo conteúdo e escolhe a escala sozinho:
+
+| Arquivo | Escala usada | Comando |
+|---|---|---|
+| `RF.OBS.P90.*` (percentil) | paleta oficial do RF (0–1), igual às médias | `python3 rf_figura.py .../RF.OBS.P90.202607.nc` |
+| `RF.OBS.FREQ0.7.*` (nº de dias) | sequencial de contagem (YlOrRd), 0 ao total de dias | `python3 rf_figura.py .../RF.OBS.FREQ0.7.202607.nc` |
+| `RF.OBS.FREQ0.7.*` (% dos dias) | a mesma, em percentual | `python3 rf_figura.py .../RF.OBS.FREQ0.7.202607.nc --var frequencia` |
+
+O arquivo de frequência traz **duas** variáveis: `dias` (contagem, o padrão da figura) e `frequencia` (percentual dos dias válidos); `--var frequencia` troca de uma para a outra. O limiar aparece no rótulo da barra de cores, lido do atributo `limiar` do NetCDF, e o número de dias agregados vai no título.
+
+```bash
+# Julho/2026: gerar as três agregações e depois as figuras
+python3 rf_observado.py --de 20260701 --ate 20260731 \
+    --media --frequencia 0.7 --percentil 90
+
+D=data/output/2.2/RF_OBS/netcdf
+python3 rf_figura.py $D/RF.OBS.FREQ0.7.202607.nc                     # dias
+python3 rf_figura.py $D/RF.OBS.FREQ0.7.202607.nc --var frequencia    # % dos dias
+python3 rf_figura.py $D/RF.OBS.P90.202607.nc                         # percentil 90
+
+# Painel do ano: 12 mapas de dias acima do limiar (mesma escala nos 12)
+python3 rf_figura.py "$D/RF.OBS.FREQ0.7.2026*.nc" --painel --colunas 4 \
+    --titulo "Dias com RF >= 0,7 — 2026" --saida freq_2026.png
+```
+
+Num painel, a escala é comum a todos os campos, o que torna os meses comparáveis entre si. Por isso **não** é possível misturar frequência (contagem de dias) e risco (0–1) na mesma figura: uma figura tem uma só barra de cores, e o script recusa a mistura com uma mensagem explicando como separar. O FWI segue a mesma lógica (`--var` escolhe o componente, `--escala-fwi` força a escala 0-5-12-22-35-60):
+
+```bash
+python3 rf_figura.py .../FWI.OBS.FREQ22.202607.nc                  # dias com FWI >= 22
+python3 rf_figura.py .../FWI.OBS.P90.202607.nc --var DSR           # percentil 90 do DSR
+```
 
 ### 6.6 Horário da ERA5: hora fixa ou hora solar local
 

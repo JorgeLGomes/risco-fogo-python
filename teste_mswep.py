@@ -337,6 +337,81 @@ def teste_ponta_a_ponta(config):
     print(f"5c. FWI observado com MSWEP: {len(arquivos_fwi)} dia(s) ok")
 
 
+# ---------------------------------------------------------------------------
+# 6. Dado REAL (só roda onde o disco do MSWEP existe — ian01/CPTEC)
+# ---------------------------------------------------------------------------
+
+MSWEP_REAL = "/pesq/dados/sismom/SisMOM/sipec/mswep/daily"
+DOMINIO_REAL = (-60.05, 29.95, -114.95, -30.05)
+
+
+def teste_mswep_real():
+    """Confere a leitura do arquivo verdadeiro: variável detectada, grade
+    0,1°, latitude reordenada, recorte e ordem de grandeza da chuva."""
+    import glob
+    import time as _t
+
+    diarios = sorted(glob.glob(os.path.join(MSWEP_REAL, "*", "*",
+                                            "[0-9]" * 8 + ".nc")))
+    if not diarios:
+        print("6. dado real do MSWEP não encontrado neste servidor "
+              f"({MSWEP_REAL}) — teste pulado")
+        return
+
+    caminho = diarios[len(diarios) // 2]
+    with xr.open_dataset(caminho, decode_times=False) as ds:
+        nome = rf_core.nome_variavel_precip(ds)
+        forma = ds[nome].shape
+
+    t0 = _t.time()
+    dados, lat, lon = rf_core.le_precip_arquivo(caminho, None, DOMINIO_REAL)
+    leitura = _t.time() - t0
+
+    assert dados.shape[0] == 1, dados.shape
+    assert lat[0] < lat[-1], "latitude deveria sair de sul para norte"
+    assert lat.min() >= DOMINIO_REAL[0] and lat.max() <= DOMINIO_REAL[1]
+    assert lon.min() >= DOMINIO_REAL[2] and lon.max() <= DOMINIO_REAL[3]
+    passo_lat = float(np.median(np.diff(lat)))
+    passo_lon = float(np.median(np.diff(lon)))
+    assert abs(passo_lat - 0.1) < 0.01 and abs(passo_lon - 0.1) < 0.01, \
+        (passo_lat, passo_lon)
+
+    validos = dados[np.isfinite(dados)]
+    assert validos.size > 0
+    assert validos.min() >= 0.0, validos.min()
+    assert validos.max() < 2000.0, validos.max()        # mm/dia plausível
+
+    # A grade recortada tem de casar com a do IMERG do pipeline
+    esperado = (901, 850)
+    assert dados.shape[1:] == esperado, (dados.shape[1:], esperado)
+
+    print(f"6. dado REAL {os.path.basename(caminho)}: variável '{nome}' "
+          f"{forma} -> recorte {dados.shape[1:]} em {leitura:.1f}s; "
+          f"passo {passo_lat:.2f}°; chuva {validos.min():.1f}–"
+          f"{validos.max():.1f} mm/dia (média {validos.mean():.2f}) ok")
+
+    mensal = os.path.join(os.path.dirname(caminho),
+                          prepara_mswep_mes(caminho))
+    if os.path.exists(mensal):
+        import prepara_mswep
+        dia = dt.datetime.strptime(
+            os.path.basename(caminho)[:8], "%Y%m%d")
+        t0 = _t.time()
+        prec_m, _, _ = prepara_mswep.le_dia(mensal, dia, DOMINIO_REAL,
+                                            mensal=True)
+        dif = np.nanmax(np.abs(prec_m - dados[0]))
+        assert dif < 1e-3, dif
+        print(f"6b. dado REAL: dia extraído do mensal "
+              f"{os.path.basename(mensal)} == arquivo diário "
+              f"(dif. {dif:.1e}, {_t.time()-t0:.1f}s) ok")
+
+
+def prepara_mswep_mes(caminho_diario):
+    import prepara_mswep
+    dia = dt.datetime.strptime(os.path.basename(caminho_diario)[:8], "%Y%m%d")
+    return os.path.basename(prepara_mswep.arquivo_mensal(caminho_diario, dia))
+
+
 def main():
     print(f"Área de teste: {TMP}\n")
     try:
@@ -348,6 +423,7 @@ def main():
         config = teste_config()
         prepara_bancos()
         teste_ponta_a_ponta(config)
+        teste_mswep_real()
         print("\nTODOS OS TESTES DO MSWEP PASSARAM")
     finally:
         shutil.rmtree(TMP, ignore_errors=True)
