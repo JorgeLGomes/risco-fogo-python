@@ -517,7 +517,7 @@ python3 rf_figura.py data/output/2.2/RF_OBS/netcdf/RF.OBS.MEDIA.2026*.nc \
 python3 rf_figura.py '.../RF.OBS.202607*18.nc' --painel --colunas 7 --classes
 ```
 
-Opções: `--painel` (vários campos numa figura) com `--colunas`, `--titulo`, `--saida` (arquivo ou pasta), `--dpi`, `--classes` (uma cor por faixa, em vez da rampa — útil para leitura por classe) e `--sem-mascara` (não aplica a máscara de oceano, necessária apenas em campos gerados com `--sem-vegetacao`, que não trazem a máscara d'água). Requer `matplotlib` (e `global-land-mask` para a máscara de oceano).
+Opções: `--painel` (vários campos numa figura) com `--colunas`, `--titulo`, `--saida` (arquivo ou pasta), `--dpi`, `--sem-periodo`/`--so-periodo` (escopo, abaixo), `--classes` (uma cor por faixa, em vez da rampa — útil para leitura por classe) e `--sem-mascara` (não aplica a máscara de oceano, necessária apenas em campos gerados com `--sem-vegetacao`, que não trazem a máscara d'água). Requer `matplotlib` (e `global-land-mask` para a máscara de oceano).
 
 **Figuras de frequência e de percentil.** São os mesmos comandos — o script reconhece o tipo do arquivo pelo conteúdo e escolhe a escala sozinho:
 
@@ -526,6 +526,14 @@ Opções: `--painel` (vários campos numa figura) com `--colunas`, `--titulo`, `
 | `RF.OBS.P90.*` (percentil) | paleta oficial do RF (0–1), igual às médias | `python3 rf_figura.py .../RF.OBS.P90.202607.nc` |
 | `RF.OBS.FREQ0.7.*` (nº de dias) | sequencial de contagem (YlOrRd), 0 ao total de dias | `python3 rf_figura.py .../RF.OBS.FREQ0.7.202607.nc` |
 | `RF.OBS.FREQ0.7.*` (% dos dias) | a mesma, em percentual | `python3 rf_figura.py .../RF.OBS.FREQ0.7.202607.nc --var frequencia` |
+
+**Escopo dos arquivos (`--sem-periodo` / `--so-periodo`).** Um curinga como `RF.PREV.MEDIA.*.nc` pega tanto os mapas mensais (`...202609.nc`) quanto o da rodada inteira (`...20260805-20270904.nc`), e o segundo entra no painel desalinhando a grade de meses. `--sem-periodo` descarta o campo do período inteiro e deixa só os mensais/diários; `--so-periodo` faz o contrário, plotando apenas o do período todo. As duas opções são mutuamente exclusivas e o script informa quantos arquivos sobraram (ou explica o que encontrou, se o escopo ficar vazio).
+
+```bash
+S=data/output/2.2/RF_PREV_BESM/netcdf/<modelo>
+python3 rf_figura.py "$S/RF.PREV.MEDIA.*.nc" --painel --colunas 4 --sem-periodo
+python3 rf_figura.py "$S/RF.PREV.MEDIA.*.nc" --so-periodo --saida media_rodada.png
+```
 
 O arquivo de frequência traz **duas** variáveis: `dias` (contagem, o padrão da figura) e `frequencia` (percentual dos dias válidos); `--var frequencia` troca de uma para a outra. O limiar aparece no rótulo da barra de cores, lido do atributo `limiar` do NetCDF, e o número de dias agregados vai no título.
 

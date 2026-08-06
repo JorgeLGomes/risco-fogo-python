@@ -711,6 +711,12 @@ man.push(tabela(["Arquivo", "Escala usada", "Comando"], [
   ["RF.OBS.FREQ0.7.* (nº de dias)", "sequencial de contagem (YlOrRd), 0 ao total de dias", "python3 rf_figura.py .../RF.OBS.FREQ0.7.202607.nc"],
   ["RF.OBS.FREQ0.7.* (% dos dias)", "a mesma, em percentual", "python3 rf_figura.py .../RF.OBS.FREQ0.7.202607.nc --var frequencia"],
 ], [26, 34, 40]));
+man.push(p([{ t: "Escopo dos arquivos (--sem-periodo / --so-periodo). ", b: true }, { t: "Um curinga como RF.PREV.MEDIA.*.nc pega tanto os mapas mensais (...202609.nc) quanto o da rodada inteira (...20260805-20270904.nc), e o segundo entra no painel desalinhando a grade de meses. --sem-periodo descarta o campo do período inteiro e deixa só os mensais/diários; --so-periodo faz o contrário, plotando apenas o do período todo. As duas opções são mutuamente exclusivas e o script informa quantos arquivos sobraram (ou explica o que encontrou, se o escopo ficar vazio)." }]));
+man.push(...codigo([
+  "S=data/output/2.2/RF_PREV_BESM/netcdf/<modelo>",
+  "python3 rf_figura.py \"$S/RF.PREV.MEDIA.*.nc\" --painel --colunas 4 --sem-periodo",
+  "python3 rf_figura.py \"$S/RF.PREV.MEDIA.*.nc\" --so-periodo --saida media_rodada.png",
+]));
 man.push(p("O arquivo de frequência traz duas variáveis: dias (contagem, o padrão da figura) e frequencia (percentual dos dias válidos); --var frequencia troca de uma para a outra. O limiar aparece no rótulo da barra de cores, lido do atributo limiar do NetCDF, e o número de dias agregados vai no título."));
 man.push(...codigo([
   "# Julho/2026: gerar as tres agregacoes e depois as figuras",

@@ -81,6 +81,10 @@ python3 prepara_era5.py  --config config.yaml --dias 7    # T/UR da ERA5 (requer
 python3 rf_observado.py  --config config.yaml --dias 7
 python3 rf_observado.py  --config config.yaml --meses 3 --sem-vegetacao --sem-topografia
 
+# Figuras: só os meses (--sem-periodo) ou só o campo do período todo
+python3 rf_figura.py "<saida>/RF.PREV.MEDIA.*.nc" --painel --sem-periodo
+python3 rf_figura.py "<saida>/RF.PREV.MEDIA.*.nc" --so-periodo
+
 # Um mês fechado (julho/2026) + o risco MÉDIO do mês, e a figura
 python3 rf_observado.py --de 20260701 --ate 20260731 --media
 python3 rf_figura.py data/output/2.2/RF_OBS/netcdf/RF.OBS.MEDIA.202607.nc

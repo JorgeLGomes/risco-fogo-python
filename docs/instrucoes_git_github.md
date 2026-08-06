@@ -322,7 +322,11 @@ Agregacoes e figuras:
 - rf_figura: rotulo correto da barra de cores e do titulo nas figuras de
   frequencia (contagem de dias x percentual) e recusa explicita de
   misturar frequencia com risco 0-1 na mesma figura/painel
-- teste_rf_observado: figuras de FREQ e P90, e o caso da mistura recusada
+- rf_figura: --sem-periodo e --so-periodo escolhem o escopo dos arquivos
+  (mensais/diarios x campo do periodo inteiro), evitando que o mapa da
+  rodada toda entre no painel dos meses por causa do curinga
+- teste_rf_observado: figuras de FREQ e P90, escopo periodo/mensal e o
+  caso da mistura recusada
 - rf_core: silencia os RuntimeWarning do numpy ("All-NaN slice
   encountered" / "Mean of empty slice") nos pontos sem nenhum dia valido
   (oceano) - o resultado NaN e o esperado, mas o aviso poluia a saida da

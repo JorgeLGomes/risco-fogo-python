@@ -30,8 +30,15 @@ Uso
     # Todos os dias de um mês, num painel
     python3 rf_figura.py .../RF.OBS.202607*18.nc --painel --colunas 7
 
+    # Só os meses (descarta o campo do período inteiro que o curinga pega)
+    python3 rf_figura.py '.../RF.PREV.MEDIA.*.nc' --painel --sem-periodo
+
+    # Só o campo do período inteiro
+    python3 rf_figura.py '.../RF.PREV.MEDIA.*.nc' --so-periodo
+
 Opções principais: --saida (arquivo ou pasta), --painel, --colunas,
---titulo, --dpi, --sem-mascara (não aplica a máscara de oceano).
+--titulo, --dpi, --sem-mascara (não aplica a máscara de oceano),
+--sem-periodo / --so-periodo (escopo: mensais/diários x período inteiro).
 
 Requer matplotlib. A máscara de oceano usa o pacote global-land-mask
 quando disponível (necessária apenas para campos gerados com
@@ -178,6 +185,23 @@ def rotulo_do_arquivo(caminho, atributos):
     return nome.replace(".nc", "")
 
 
+# Agrupamento de cada arquivo, pelo sufixo do nome:
+#   periodo  ->  ...AAAAMMDD-AAAAMMDD.nc  (a rodada/período inteiro)
+#   mensal   ->  ...AAAAMM.nc             (um mês-calendário)
+#   diario   ->  ...AAAAMMDDHH.nc         (um dia/horário)
+_RE_PERIODO = re.compile(r"\.\d{8}-\d{8}\.nc$")
+_RE_MENSAL = re.compile(r"\.\d{6}\.nc$")
+
+
+def agrupamento_do_arquivo(caminho):
+    nome = os.path.basename(caminho)
+    if _RE_PERIODO.search(nome):
+        return "periodo"
+    if _RE_MENSAL.search(nome):
+        return "mensal"
+    return "diario"
+
+
 def mascara_oceano(dados, lat, lon):
     """Aplica NaN sobre o oceano (útil para campos gerados sem o mapa de
     vegetação, que não trazem a máscara d'água). Sem o pacote
@@ -232,6 +256,16 @@ def main():
                              "em vez da rampa interpolada do SLD oficial.")
     parser.add_argument("--sem-mascara", action="store_true",
                         help="Não aplica a máscara de oceano.")
+    escopo = parser.add_mutually_exclusive_group()
+    escopo.add_argument("--sem-periodo", action="store_true",
+                        help="Ignora os arquivos que agregam o PERÍODO "
+                             "INTEIRO (…AAAAMMDD-AAAAMMDD.nc), deixando "
+                             "no painel só os mensais/diários — evita que "
+                             "o mapa do período todo entre junto com os "
+                             "meses num curinga como RF.PREV.MEDIA.*.nc.")
+    escopo.add_argument("--so-periodo", action="store_true",
+                        help="Plota SOMENTE o arquivo do período inteiro "
+                             "(…AAAAMMDD-AAAAMMDD.nc).")
     args = parser.parse_args()
 
     caminhos = []
@@ -242,6 +276,26 @@ def main():
     caminhos = [c for c in caminhos if c.endswith(".nc")]
     if not caminhos:
         sys.exit("Nenhum arquivo NetCDF encontrado.")
+
+    # Escopo: separa os campos do período inteiro dos mensais/diários.
+    if args.sem_periodo or args.so_periodo:
+        antes = len(caminhos)
+        selecionados = [c for c in caminhos
+                        if (agrupamento_do_arquivo(c) == "periodo")
+                        == bool(args.so_periodo)]
+        if not selecionados:
+            quais = sorted({agrupamento_do_arquivo(c) for c in caminhos})
+            sys.exit(
+                f"Erro: nenhum arquivo do escopo pedido "
+                f"({'--so-periodo' if args.so_periodo else '--sem-periodo'})."
+                f"\n  {antes} arquivo(s) encontrado(s), agrupamento(s): "
+                f"{', '.join(quais)}."
+                f"\n  Período inteiro = nome terminado em "
+                f"AAAAMMDD-AAAAMMDD.nc; mensal = AAAAMM.nc.")
+        if len(selecionados) != antes:
+            print(f"Escopo: {len(selecionados)} de {antes} arquivo(s) "
+                  f"({'período inteiro' if args.so_periodo else 'mensais/diários'}).")
+        caminhos = selecionados
 
     # Campos de frequência (variáveis "dias"/"frequencia") têm escala
     # própria — não são risco, são contagem.

@@ -278,10 +278,45 @@ def teste_figura():
     assert r.returncode != 0, r.stdout
     assert "FREQU" in (r.stdout + r.stderr).upper()
 
+    # escopo: --sem-periodo / --so-periodo separam o campo do período
+    # inteiro (RF.OBS.MEDIA.AAAAMMDD-AAAAMMDD.nc) dos mensais/diários
     import rf_figura
+    assert rf_figura.agrupamento_do_arquivo(
+        "RF.OBS.MEDIA.20260727-20260731.nc") == "periodo"
+    assert rf_figura.agrupamento_do_arquivo("RF.OBS.MEDIA.202607.nc") == "mensal"
+    assert rf_figura.agrupamento_do_arquivo("RF.OBS.2026073118.nc") == "diario"
+
+    curinga = os.path.join(dir_out, "RF.OBS.MEDIA.*.nc")
+    todos = [f for f in os.listdir(dir_out) if f.startswith("RF.OBS.MEDIA.")]
+    assert len(todos) >= 2, todos            # o do período + o(s) mensal(is)
+
+    alvo = os.path.join(TMP, "so_periodo.png")
+    r = subprocess.run([sys.executable, "rf_figura.py", curinga,
+                        "--so-periodo", "--saida", alvo],
+                       capture_output=True, text=True, timeout=600)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "1 de " in r.stdout, r.stdout
+    assert os.path.exists(alvo)
+
+    alvo = os.path.join(TMP, "sem_periodo.png")
+    r = subprocess.run([sys.executable, "rf_figura.py", curinga, "--painel",
+                        "--sem-periodo", "--saida", alvo],
+                       capture_output=True, text=True, timeout=600)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert f"{len(todos) - 1} de {len(todos)}" in r.stdout, r.stdout
+    assert os.path.exists(alvo)
+
+    # escopo vazio -> erro explicativo
+    r = subprocess.run([sys.executable, "rf_figura.py",
+                        os.path.join(dir_out, "RF.OBS.MEDIA.202607.nc"),
+                        "--so-periodo", "--saida", os.path.join(TMP, "x.png")],
+                       capture_output=True, text=True, timeout=600)
+    assert r.returncode != 0 and "escopo" in (r.stdout + r.stderr)
+
     cmap, _ = rf_figura.escala()
     assert rf_figura.CORES[0] == "#17b617" and rf_figura.CORES[-1] == "#a70000"
-    print("rf_figura (mapa, painel, paleta do SLD, frequencia e percentil) ok")
+    print("rf_figura (mapa, painel, paleta do SLD, frequencia, percentil "
+          "e escopo periodo/mensal) ok")
 
 
 
