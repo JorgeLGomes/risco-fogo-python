@@ -39,15 +39,26 @@ IDX = """1:0:d=2026080500:PRMSL:mean sea level:6 hour fcst:
 3:2500:d=2026080500:RH:2 m above ground:6 hour fcst:
 4:4200:d=2026080500:APCP:surface:0-6 hour acc fcst:
 5:6000:d=2026080500:UGRD:10 m above ground:6 hour fcst:
+6:7500:d=2026080500:VGRD:10 m above ground:6 hour fcst:
 """
 idx = pg.parse_idx(IDX)
-assert len(idx) == 5
+assert len(idx) == 6
 assert idx[3]["var"] == "APCP" and idx[3]["ini"] == 4200 and idx[3]["fim"] == 5999
-assert idx[4]["fim"] is None            # última mensagem: sem limite
+assert idx[5]["fim"] is None            # última mensagem: sem limite
 msgs = pg.acha_mensagens(idx, [("APCP", "surface", None),
                                ("TMP", "2 m above ground", None),
                                ("RH", "2 m above ground", None)])
 assert [m["var"] for m in msgs] == ["APCP", "TMP", "RH"]
+
+# Com vento: as duas mensagens de 10 m entram no mesmo pedido
+msgs_vento = pg.acha_mensagens(idx, [("APCP", "surface", None),
+                                     ("TMP", "2 m above ground", None),
+                                     ("RH", "2 m above ground", None),
+                                     ("UGRD", "10 m above ground", None),
+                                     ("VGRD", "10 m above ground", None)])
+assert [m["var"] for m in msgs_vento] == ["APCP", "TMP", "RH", "UGRD", "VGRD"]
+assert msgs_vento[3]["ini"] == 6000 and msgs_vento[3]["fim"] == 7499
+assert msgs_vento[4]["ini"] == 7500 and msgs_vento[4]["fim"] is None
 try:
     pg.acha_mensagens(idx, [("DPT", "2 m above ground", None)])
     raise AssertionError("deveria falhar para variável ausente")
@@ -136,6 +147,25 @@ assert pg.grava_netcdf(
     {"prec": np.zeros((lat_r.size, lon_r.size), np.float32)},
     lat_r, lon_r, valida_dt, sobrescrever=False) is False
 print("Teste 5 (NetCDF aceito pelo pipeline e sem sobrescrita) ok")
+
+# ---------------------------------------------------------------------------
+# 6. Vento a 10 m (insumo do FWI): arquivo próprio, lido como o da ERA5
+# ---------------------------------------------------------------------------
+u = rng.uniform(-12, 12, (lat_r.size, lon_r.size)).astype(np.float32)
+v = rng.uniform(-12, 12, (lat_r.size, lon_r.size)).astype(np.float32)
+arq_vento = os.path.join(dirout, f"GFS.PREV.U10m.V10m.{MODELO}.{valida}.nc")
+pg.grava_netcdf(arq_vento, {"U10m": u, "V10m": v},
+                lat_r, lon_r, valida_dt, sobrescrever=True)
+
+import fwi_observado
+vel, la_v, lo_v = fwi_observado.le_vento(arq_vento)      # mesma leitura da ERA5
+assert vel.shape == (lat_r.size, lon_r.size) and la_v[0] < la_v[-1]
+assert np.allclose(vel, np.hypot(u, v) * 3.6, atol=1e-3)   # m/s -> km/h
+
+# A decodificação exige o vento quando pedido, e o dispensa com vento=False
+assert "vento" in pg.decodifica_grib.__doc__
+assert "vento" in pg.baixa_fhora.__doc__
+print("Teste 6 (vento 10 m: arquivo proprio, km/h, leitura do FWI) ok")
 
 print()
 print("TODOS OS TESTES DO PREPARA_GFS PASSARAM")

@@ -2,7 +2,7 @@
 
 ## Risco de Fogo Previsto em Python — INPE_FireRiskModel v2.2
 
-**Versão:** 2.2 · 5 de agosto de 2026
+**Versão:** 2.3 · 5 de agosto de 2026
 **Substitui:** `rf_previsto_1-5dias_2023.sh` e `rf_previsto_1-2_semanas_2024.sh` (bash + NCL)
 
 ---
@@ -331,13 +331,15 @@ python3 rf_previsto.py   --de 6h --ate 4d18h --passo 6h   # 3. RF
 
 ### 6.1 GFS (prepara_gfs.py)
 
-O `prepara_gfs.py` baixa a previsão do GFS 0,25° da NOAA e grava os arquivos `GFS.PREV.PREC.*` (prec em mm/dia) e `GFS.PREV.TEMP2m.RH2m.*` (T2m em K, UR2m em %) na convenção da seção 2.2, prontos para o `rf_previsto.py`. Requer o pygrib (`python3 -m pip install pygrib`).
+O `prepara_gfs.py` baixa a previsão do GFS 0,25° da NOAA e grava, na convenção da seção 2.2, `GFS.PREV.PREC.*` (prec em mm/dia), `GFS.PREV.TEMP2m.RH2m.*` (T2m em K, UR2m em %) e `GFS.PREV.U10m.V10m.*` (vento a 10 m em m/s). Requer o pygrib (`python3 -m pip install pygrib`).
+
+**Vento a 10 m.** O RF não usa vento, mas o FWI exige (é o insumo do ISI), então o download traz UGRD/VGRD por padrão — duas mensagens GRIB a mais por horário (~1 MB, de ~2 para ~3 MB). O arquivo de vento segue o mesmo formato do gerado pelo `prepara_era5.py` e é lido pela mesma função, o que permitirá encadear a análise observada com a previsão no FWI. Use `--sem-vento` para baixar apenas o necessário ao RF.
 
 **Importante:** o serviço OpenDAP do NOMADS foi **aposentado pela NOAA** (Service Change Notice 25-81, efetivo em 23/02/2026). O script usa os serviços vigentes indicados no próprio aviso:
 
 | Método | Descrição |
 |---|---|
-| `s3` (padrão) | "Fast download method": lê o índice `.idx` de cada horário e baixa por byte-range só as 3 mensagens GRIB necessárias, no espelho oficial da AWS (`noaa-gfs-bdp-pds`), ~2 MB por horário |
+| `s3` (padrão) | "Fast download method": lê o índice `.idx` de cada horário e baixa por byte-range só as mensagens GRIB necessárias (3 sem vento, 5 com), no espelho oficial da AWS (`noaa-gfs-bdp-pds`), ~2–3 MB por horário |
 | `nomads` | O mesmo fast download, direto no HTTPS do NOMADS (`/pub/data/nccf/com/gfs/prod/...`) |
 | `filtro` | Grib filter do NOMADS (recorte de variáveis/região no servidor; URL ajustável via `--url-filtro`) |
 
@@ -348,7 +350,7 @@ python3 prepara_gfs.py --simular                # só mostra o plano e a URL
 python3 prepara_gfs.py --metodo nomads          # se a AWS estiver bloqueada
 ```
 
-Opções principais: `--data`/`--rodada` (rodada), `--dias` (alcance, padrão 16), `--passo` (validades, padrão 6 h), `--dominio latS,latN,lonW,lonE`, `--acumulo 24h|dia`, `--jobs` (downloads simultâneos), `--base`/`--config` (destino), `--sobrescrever` e `--simular`.
+Opções principais: `--data`/`--rodada` (rodada), `--dias` (alcance, padrão 16), `--passo` (validades, padrão 6 h), `--dominio latS,latN,lonW,lonE`, `--acumulo 24h|dia`, `--jobs` (downloads simultâneos), `--base`/`--config` (destino), `--sem-vento`, `--sobrescrever` e `--simular`.
 
 Sobre a precipitação: o APCP do GFS vem em "baldes" (6 h até +240 h; 12 h de +240 h a +384 h). O acumulado diário de cada validade soma os baldes que cobrem as 24 h anteriores, com o intervalo lido do próprio GRIB — a transição 6 h/12 h é automática, e validades sem arquivo além de +240 h (fora do passo de 12 h) são puladas com aviso.
 
@@ -581,7 +583,11 @@ python3 rf_figura.py .../FWI.OBS.202607*.nc --painel --colunas 7
 
 ### 7.4 O que falta para o FWI previsto
 
-O FWI observado fecha a "análise de fogo contínua" da metodologia. Para o FWI **previsto** falta apenas o vento nas fontes de previsão: o `prepara_gfs.py` hoje baixa APCP, TMP e RH — acrescentar UGRD/VGRD a 10 m habilita o FWI de curto prazo; nas fontes sazonais (BESM/Eta) o vento precisa vir no pacote de dados. A condição inicial dos códigos de umidade sai naturalmente do estado salvo pelo `fwi_observado.py` (`--estado-inicial`).
+O FWI observado fecha a "análise de fogo contínua" da metodologia. Para o FWI **previsto** faltam, nesta ordem:
+
+1. **Vento nas fontes** — ✔ resolvido para o GFS: o `prepara_gfs.py` já grava `GFS.PREV.U10m.V10m.*` (seção 6.1). Nas fontes sazonais (BESM/Eta) o vento **ainda não vem no pacote de dados** e precisa ser solicitado ao CPTEC — sem ele não há ISI e, portanto, não há FWI sazonal.
+2. **Camada de fontes** — o `rf_fontes.py` entrega precipitação, temperatura e umidade; falta declarar os padrões de arquivo e variáveis do vento.
+3. **Um `fwi_previsto.py`** — diferente do RF (independente por horizonte), o FWI previsto é sequencial: parte do estado dos códigos de umidade no dia da rodada e avança dia a dia até o horizonte. Essa peça já existe: o `fwi_observado.py` salva o estado (`--salvar-estado`) e o `fwi_previsto` o consumiria com `--estado-inicial` — é o "→ condição inicial FFMC·DMC·DC" do fluxograma da metodologia.
 
 ## 8. Saídas
 

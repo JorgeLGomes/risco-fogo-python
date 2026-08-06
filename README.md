@@ -14,7 +14,7 @@ rf_previsto.py                # Script genérico: qualquer horizonte e fonte (GF
 rf_fontes.py                  # Camada de fontes: config por fonte, agregação 1h/12h/1d, série IMERG+previsão
 rf_config.py                  # Configuração YAML dos dados de entrada (--config)
 era5_tempo.py                 # Horário do ERA5: hora fixa UTC ou hora solar local (fusos)
-prepara_gfs.py                # Download do GFS (fast download .idx / grib filter — pós-SCN 25-81)
+prepara_gfs.py                # Download do GFS: prec, T2m/RH2m e vento U10m/V10m (fast download .idx)
 prepara_imerg.py              # Download/conversão do IMERG Early Daily V07 (GES DISC, Earthdata)
 prepara_era5.py               # Download/conversão da ERA5: t2m, ur2m (de t+td), u10, v10 (CDS/Copernicus)
 rf_observado.py               # RF OBSERVADO (IMERG + ERA5): dias/semanas/meses + médias do período

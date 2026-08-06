@@ -295,7 +295,7 @@ man.push(
     "Manual do Usuário",
     "Risco de Fogo Previsto em Python — INPE_FireRiskModel v2.2",
     [
-      "Versão 2.2 · 5 de agosto de 2026",
+      "Versão 2.3 · 5 de agosto de 2026",
       "Substitui: rf_previsto_1-5dias_2023.sh e rf_previsto_1-2_semanas_2024.sh (bash + NCL)",
       "Programa Queimadas — http://www.inpe.br/queimadas/",
     ],
@@ -567,13 +567,14 @@ man.push(...codigo([
   "python3 rf_previsto.py   --de 6h --ate 4d18h --passo 6h   # 3. RF",
 ]));
 man.push(h2("6.1 GFS (prepara_gfs.py)"));
-man.push(p("O prepara_gfs.py baixa a previsão do GFS 0,25° da NOAA e grava os arquivos GFS.PREV.PREC.* (prec em mm/dia) e GFS.PREV.TEMP2m.RH2m.* (T2m em K, UR2m em %) na convenção da seção 2.2, prontos para o rf_previsto.py. Requer o pygrib (python3 -m pip install pygrib)."));
+man.push(p("O prepara_gfs.py baixa a previsão do GFS 0,25° da NOAA e grava, na convenção da seção 2.2, GFS.PREV.PREC.* (prec em mm/dia), GFS.PREV.TEMP2m.RH2m.* (T2m em K, UR2m em %) e GFS.PREV.U10m.V10m.* (vento a 10 m em m/s). Requer o pygrib (python3 -m pip install pygrib)."));
+man.push(p([{ t: "Vento a 10 m. ", b: true }, { t: "O RF não usa vento, mas o FWI exige (é o insumo do ISI), então o download traz UGRD/VGRD por padrão — duas mensagens GRIB a mais por horário (~1 MB, de ~2 para ~3 MB). O arquivo de vento segue o mesmo formato do gerado pelo prepara_era5.py e é lido pela mesma função, o que permitirá encadear a análise observada com a previsão no FWI. Use --sem-vento para baixar apenas o necessário ao RF." }]));
 man.push(p([{ t: "Importante: ", b: true }, { t: "o serviço OpenDAP do NOMADS foi aposentado pela NOAA (Service Change Notice 25-81, efetivo em 23/02/2026). O script usa os serviços vigentes indicados no próprio aviso:" }]));
 man.push(
   tabela(
     ["Método", "Descrição"],
     [
-      ["s3 (padrão)", "\"Fast download method\": lê o índice .idx de cada horário e baixa por byte-range só as 3 mensagens GRIB necessárias, no espelho oficial da AWS (noaa-gfs-bdp-pds), ~2 MB por horário"],
+      ["s3 (padrão)", "\"Fast download method\": lê o índice .idx de cada horário e baixa por byte-range só as mensagens GRIB necessárias (3 sem vento, 5 com), no espelho oficial da AWS (noaa-gfs-bdp-pds), ~2–3 MB por horário"],
       ["nomads", "O mesmo fast download, direto no HTTPS do NOMADS (/pub/data/nccf/com/gfs/prod/...)"],
       ["filtro", "Grib filter do NOMADS (recorte de variáveis/região no servidor; URL ajustável via --url-filtro)"],
     ],
@@ -750,7 +751,10 @@ man.push(...codigo([
   "python3 rf_figura.py .../FWI.OBS.202607*.nc --painel --colunas 7",
 ]));
 man.push(h2("7.4 O que falta para o FWI previsto"));
-man.push(p("O FWI observado fecha a \"análise de fogo contínua\" da metodologia. Para o FWI previsto falta apenas o vento nas fontes de previsão: o prepara_gfs.py hoje baixa APCP, TMP e RH — acrescentar UGRD/VGRD a 10 m habilita o FWI de curto prazo; nas fontes sazonais (BESM/Eta) o vento precisa vir no pacote de dados. A condição inicial dos códigos de umidade sai naturalmente do estado salvo pelo fwi_observado.py (--estado-inicial)."));
+man.push(p("O FWI observado fecha a \"análise de fogo contínua\" da metodologia. Para o FWI previsto faltam, nesta ordem:"));
+man.push(numbered([{ t: "Vento nas fontes — ", b: true }, { t: "resolvido para o GFS: o prepara_gfs.py já grava GFS.PREV.U10m.V10m.* (seção 6.1). Nas fontes sazonais (BESM/Eta) o vento ainda não vem no pacote de dados e precisa ser solicitado ao CPTEC — sem ele não há ISI e, portanto, não há FWI sazonal." }], "num-fwi"));
+man.push(numbered([{ t: "Camada de fontes — ", b: true }, { t: "o rf_fontes.py entrega precipitação, temperatura e umidade; falta declarar os padrões de arquivo e variáveis do vento." }], "num-fwi"));
+man.push(numbered([{ t: "Um fwi_previsto.py — ", b: true }, { t: "diferente do RF (independente por horizonte), o FWI previsto é sequencial: parte do estado dos códigos de umidade no dia da rodada e avança dia a dia até o horizonte. Essa peça já existe: o fwi_observado.py salva o estado (--salvar-estado) e o fwi_previsto o consumiria com --estado-inicial." }], "num-fwi"));
 
 man.push(h1("8. Saídas"));
 man.push(h2("8.1 Produto diário (1 a 5 dias)"));

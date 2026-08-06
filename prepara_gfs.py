@@ -9,6 +9,7 @@ Fogo, gravando os NetCDF na convenção esperada pelo pipeline:
 
     GFS.PREV.PREC.{modelo}.{valida}.nc         -> prec   (mm/dia)
     GFS.PREV.TEMP2m.RH2m.{modelo}.{valida}.nc  -> TEMP2m (K) e RH2m (%)
+    GFS.PREV.U10m.V10m.{modelo}.{valida}.nc    -> U10m e V10m (m/s)
 
 em  {base}/data/output/2.2/GFS/netcdf/{modelo}/ .
 
@@ -21,8 +22,9 @@ ambos:
   --metodo s3      (padrão) espelho oficial do GFS no AWS Open Data
                    (noaa-gfs-bdp-pds). Para cada horário de previsão são
                    baixadas APENAS as 3 mensagens GRIB necessárias
-                   (APCP, TMP 2m, RH 2m) via requisições HTTP com Range,
-                   usando o índice .idx (~2 MB por horário). É o "fast
+                   (APCP, TMP 2m, RH 2m e, com --vento, UGRD/VGRD 10 m)
+                   via requisições HTTP com Range, usando o índice .idx
+                   (~2 MB por horário, ~3 MB com vento). É o "fast
                    download method" da NOAA, no espelho AWS.
   --metodo nomads  o mesmo "fast download method", direto no HTTPS do
                    NOMADS (nomads.ncep.noaa.gov/pub/...). Use se o AWS
@@ -30,6 +32,10 @@ ambos:
   --metodo filtro  "grib filter" do NOMADS (recorte de variáveis/região
                    no servidor; URL configurável via --url-filtro).
                    Documentação: nomads.ncep.noaa.gov/info.php?page=gribfilter
+
+O vento a 10 m (--vento, ligado por padrão) não é usado pelo RF, mas é
+insumo obrigatório do FWI (índice ISI). Use --sem-vento para baixar apenas
+o necessário ao RF.
 
 Decodificação GRIB2: pygrib  ->  python3 -m pip install pygrib
 
@@ -76,8 +82,8 @@ URL_NOMADS_PUB = ("https://nomads.ncep.noaa.gov/pub/data/nccf/com/gfs/prod/"
 URL_FILTRO = ("https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl"
               "?dir=%2Fgfs.{data}%2F{rodada}%2Fatmos"
               "&file=gfs.t{rodada}z.pgrb2.0p25.f{fff}"
-              "&var_APCP=on&var_TMP=on&var_RH=on"
-              "&lev_surface=on&lev_2_m_above_ground=on"
+              "&var_APCP=on&var_TMP=on&var_RH=on{vars_vento}"
+              "&lev_surface=on&lev_2_m_above_ground=on{lev_vento}"
               "&subregion=&toplat={latN}&bottomlat={latS}"
               "&leftlon={lonW360}&rightlon={lonE360}")
 
@@ -225,9 +231,10 @@ def _http(url, faixa=None, timeout=120):
     raise RuntimeError(f"Falha definitiva em {url}: {ultimo}")
 
 
-def baixa_fhora(metodo, data, rodada, fhora, dominio):
-    """Baixa as mensagens GRIB (APCP, TMP 2m, RH 2m) de um horário de
-    previsão e devolve os bytes GRIB."""
+def baixa_fhora(metodo, data, rodada, fhora, dominio, vento=True):
+    """Baixa as mensagens GRIB de um horário de previsão e devolve os
+    bytes GRIB: APCP (superfície), TMP e RH a 2 m e, com ``vento=True``,
+    UGRD e VGRD a 10 m (insumo do FWI)."""
     fff = f"{fhora:03d}"
     if metodo in ("s3", "nomads"):
         modelo_url = URL_S3 if metodo == "s3" else URL_NOMADS_PUB
@@ -236,6 +243,9 @@ def baixa_fhora(metodo, data, rodada, fhora, dominio):
         alvos = [("APCP", "surface", None),
                  ("TMP", "2 m above ground", None),
                  ("RH", "2 m above ground", None)]
+        if vento:
+            alvos += [("UGRD", "10 m above ground", None),
+                      ("VGRD", "10 m above ground", None)]
         pedacos = []
         for e in acha_mensagens(idx, alvos):
             fim = e["fim"] if e["fim"] is not None else e["ini"] + 10_000_000
@@ -244,9 +254,12 @@ def baixa_fhora(metodo, data, rodada, fhora, dominio):
 
     # metodo == "filtro": o recorte de variáveis/região é feito no servidor
     lat_s, lat_n, lon_w, lon_e = dominio
-    url = URL_FILTRO.format(data=data, rodada=rodada, fff=fff,
-                            latN=lat_n, latS=lat_s,
-                            lonW360=lon_w % 360.0, lonE360=lon_e % 360.0)
+    url = URL_FILTRO.format(
+        data=data, rodada=rodada, fff=fff,
+        vars_vento="&var_UGRD=on&var_VGRD=on" if vento else "",
+        lev_vento="&lev_10_m_above_ground=on" if vento else "",
+        latN=lat_n, latS=lat_s,
+        lonW360=lon_w % 360.0, lonE360=lon_e % 360.0)
     return _http(url)
 
 
@@ -254,12 +267,13 @@ def baixa_fhora(metodo, data, rodada, fhora, dominio):
 # Decodificação GRIB2 (pygrib)
 # ---------------------------------------------------------------------------
 
-def decodifica_grib(dados_grib, dominio):
+def decodifica_grib(dados_grib, dominio, vento=True):
     """Decodifica as mensagens GRIB e recorta o domínio.
 
-    Retorna (prec_baldes, t2m, rh2m, lat_rec, lon_rec_out):
+    Retorna (prec_baldes, t2m, rh2m, lat_rec, lon_rec_out, u10, v10):
       prec_baldes = lista de ((ini_h, fim_h), campo 2D)
       lat_rec crescente (sul->norte); lon em -180..180.
+      u10/v10 são None quando ``vento=False`` (ou ausentes no GRIB).
     """
     import pygrib
 
@@ -269,7 +283,7 @@ def decodifica_grib(dados_grib, dominio):
     try:
         grbs = pygrib.open(caminho)
         prec_baldes = []
-        t2m = rh2m = None
+        t2m = rh2m = u10 = v10 = None
         lat_rec = lon_rec = None
         for g in grbs:
             lats, lons = g.latlons()
@@ -296,18 +310,29 @@ def decodifica_grib(dados_grib, dominio):
                 t2m = campo
             elif nome in ("2R", "R", "RH") and "2" in str(g.level):
                 rh2m = campo
+            elif nome in ("10U", "U", "UGRD") and "10" in str(g.level):
+                u10 = campo
+            elif nome in ("10V", "V", "VGRD") and "10" in str(g.level):
+                v10 = campo
             elif g.parameterName.lower().startswith("temperature"):
                 t2m = campo
             elif "humidity" in g.parameterName.lower():
                 rh2m = campo
+            elif "u-component" in g.parameterName.lower():
+                u10 = campo
+            elif "v-component" in g.parameterName.lower():
+                v10 = campo
         grbs.close()
     finally:
         os.unlink(caminho)
 
     if t2m is None or rh2m is None or not prec_baldes:
         raise RuntimeError("GRIB incompleto: APCP/TMP/RH não encontrados.")
+    if vento and (u10 is None or v10 is None):
+        raise RuntimeError("GRIB incompleto: UGRD/VGRD a 10 m não "
+                           "encontrados (use --sem-vento para dispensá-los).")
     lon_out = np.where(lon_rec > 180.0, lon_rec - 360.0, lon_rec)
-    return prec_baldes, t2m, rh2m, lat_rec, lon_out
+    return prec_baldes, t2m, rh2m, lat_rec, lon_out, u10, v10
 
 
 # ---------------------------------------------------------------------------
@@ -374,6 +399,10 @@ def main():
                              "{latN},{latS},{lonW360},{lonE360}).")
     parser.add_argument("--jobs", type=int, default=4,
                         help="Downloads simultâneos (padrão: 4).")
+    parser.add_argument("--sem-vento", action="store_true",
+                        help="Não baixa UGRD/VGRD a 10 m. O vento não é "
+                             "usado pelo RF, mas é insumo obrigatório do "
+                             "FWI (ISI) — o padrão é baixá-lo.")
     parser.add_argument("--sobrescrever", action="store_true")
     parser.add_argument("--simular", action="store_true")
     args = parser.parse_args()
@@ -404,7 +433,10 @@ def main():
           + (f" | puladas (sem arquivo no GFS): "
              f"{','.join('+'+str(v)+'h' for v in puladas)}" if puladas else ""))
     print(f"Arquivos GRIB a baixar: {len(fhoras)} horários "
-          f"(~2 MB cada no método s3)")
+          f"(~{3 if not args.sem_vento else 2} MB cada no método s3)")
+    print("Variáveis: APCP, TMP 2m, RH 2m"
+          + (", UGRD/VGRD 10m (vento — insumo do FWI)"
+             if not args.sem_vento else " (sem vento: --sem-vento)"))
     print(f"Domínio: lat [{dominio[0]}, {dominio[1]}], "
           f"lon [{dominio[2]}, {dominio[3]}] | acúmulo: {args.acumulo}")
 
@@ -445,10 +477,13 @@ def main():
     # -----------------------------------------------------------------
     resultados = {}
 
+    com_vento = not args.sem_vento
+
     def processa(fhora):
-        bruto = baixa_fhora(args.metodo, data, args.rodada, fhora, dominio)
+        bruto = baixa_fhora(args.metodo, data, args.rodada, fhora, dominio,
+                            vento=com_vento)
         with _LOCK_DECODE:
-            return fhora, decodifica_grib(bruto, dominio)
+            return fhora, decodifica_grib(bruto, dominio, vento=com_vento)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as ex:
         futuros = [ex.submit(processa, h) for h in fhoras]
@@ -478,7 +513,7 @@ def main():
         valida = valida_dt.strftime("%Y%m%d%H")
 
         prec_dia, _ = soma_janela(baldes, v, args.acumulo)
-        _, t2m, rh2m, _, _ = resultados[v]
+        _, t2m, rh2m, _, _, u10, v10 = resultados[v]
 
         novo1 = grava_netcdf(
             os.path.join(dirout, f"GFS.PREV.PREC.{modelo}.{valida}.nc"),
@@ -490,7 +525,15 @@ def main():
             {"TEMP2m": t2m, "RH2m": rh2m},
             lat_rec, lon_rec, valida_dt, args.sobrescrever)
 
-        if novo1 or novo2:
+        novo3 = False
+        if com_vento and u10 is not None and v10 is not None:
+            novo3 = grava_netcdf(
+                os.path.join(dirout,
+                             f"GFS.PREV.U10m.V10m.{modelo}.{valida}.nc"),
+                {"U10m": u10, "V10m": v10},
+                lat_rec, lon_rec, valida_dt, args.sobrescrever)
+
+        if novo1 or novo2 or novo3:
             gerados += 1
         else:
             pulados += 1

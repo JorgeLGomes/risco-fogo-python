@@ -143,7 +143,24 @@ git commit -m "Adiciona ERA5 (prepara_era5) e Risco de Fogo observado (rf_observ
 git push origin main
 ```
 
-Por último, o horário do ERA5 e a escala da UR:
+Por último, o vento do GFS (insumo do FWI previsto):
+
+```powershell
+git add -A
+git commit -m "Baixa o vento a 10 m do GFS (insumo do FWI previsto)
+
+- prepara_gfs: UGRD/VGRD a 10 m entram no fast download (.idx) e no grib
+  filter; novo arquivo GFS.PREV.U10m.V10m.{modelo}.{valida}.nc no mesmo
+  formato do vento da ERA5 (lido pela mesma funcao); --sem-vento mantem o
+  download enxuto de quem so precisa do RF (~2 MB/horario contra ~3 MB)
+- teste_prepara_gfs: mensagens de vento no .idx, byte-ranges, arquivo
+  proprio e conversao para km/h pela leitura do FWI
+- Manual v2.3: secao 6.1 (vento) e 7.4 (roteiro do FWI previsto)"
+
+git push origin main
+```
+
+Antes disso, o horário do ERA5 e a escala da UR:
 
 ```powershell
 git add -A
