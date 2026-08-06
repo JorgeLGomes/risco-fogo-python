@@ -789,7 +789,7 @@ man.push(...codigo([
   "python3 fwi_observado.py --de 20260701 --ate 20260731 --media-mensal \\",
   "    --frequencia 22 --percentil 90",
 ]));
-man.push(p("Detalhes de implementação: valores ausentes são ignorados ponto a ponto (a frequência é sempre relativa aos dias válidos daquele ponto, e o número de dias entra no atributo dias_agregados); o percentil é calculado por blocos de latitude, para não carregar a série inteira na memória na grade de 1 km. O rf_figura.py reconhece os arquivos de frequência e usa uma escala sequencial de contagem em vez da paleta de risco."));
+man.push(p("Detalhes de implementação: pontos sem nenhum campo válido (oceano, por exemplo) saem como ausentes, sem aviso na tela; valores ausentes são ignorados ponto a ponto (a frequência é sempre relativa aos dias válidos daquele ponto, e o número de dias entra no atributo dias_agregados); o percentil é calculado por blocos de latitude, para não carregar a série inteira na memória na grade de 1 km. O rf_figura.py reconhece os arquivos de frequência e usa uma escala sequencial de contagem em vez da paleta de risco."));
 
 man.push(h2("6.9 Fonte da precipitação observada: IMERG ou MSWEP (prepara_mswep.py)"));
 man.push(p("A precipitação observada alimenta os 119 dias da janela do RF previsto, o RF observado e o FWI observado. Por padrão ela vem do IMERG, baixado pelo prepara_imerg.py. Como alternativa, o pipeline lê o MSWEP (Multi-Source Weighted-Ensemble Precipitation), que já está no disco do CPTEC e portanto dispensa download:"));

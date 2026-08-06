@@ -27,9 +27,11 @@ Autores do modelo:
 Link: http://www.inpe.br/queimadas/
 """
 
+import contextlib
 import datetime as dt
 import os
 import sys
+import warnings
 
 import numpy as np
 import xarray as xr
@@ -813,6 +815,23 @@ def agrega_campos(caminhos_dias, arquivo_saida, operacao="media", titulo=None,
     return arquivo_saida, usados
 
 
+@contextlib.contextmanager
+def sem_avisos_nan():
+    """Silencia os avisos do numpy para blocos inteiramente ausentes.
+
+    ``nanpercentile``/``nanmean`` sobre uma coluna só de NaN (oceano, ou
+    ponto sem nenhum dia válido) devolvem NaN — que é exatamente o que se
+    quer nos campos agregados — mas emitem RuntimeWarning por ponto, o que
+    enche a tela numa grade de 1 km."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=RuntimeWarning,
+                                message="All-NaN slice encountered")
+        warnings.filterwarnings("ignore", category=RuntimeWarning,
+                                message="Mean of empty slice")
+        with np.errstate(invalid="ignore", all="ignore"):
+            yield
+
+
 def _agrega_percentil(caminhos_dias, arquivo_saida, percentil, titulo,
                       data_ref, log, nome_var, linhas_bloco):
     """Percentil da distribuição diária, por blocos de latitude."""
@@ -833,7 +852,7 @@ def _agrega_percentil(caminhos_dias, arquivo_saida, percentil, titulo,
             pilha.append(fatia)
         if not pilha:
             continue
-        with np.errstate(invalid="ignore", all="ignore"):
+        with sem_avisos_nan():
             saida[i0:i1] = np.nanpercentile(
                 np.stack(pilha).astype(np.float64), float(percentil), axis=0)
 

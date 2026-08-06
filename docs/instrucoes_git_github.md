@@ -323,8 +323,14 @@ Agregacoes e figuras:
   frequencia (contagem de dias x percentual) e recusa explicita de
   misturar frequencia com risco 0-1 na mesma figura/painel
 - teste_rf_observado: figuras de FREQ e P90, e o caso da mistura recusada
+- rf_core: silencia os RuntimeWarning do numpy ("All-NaN slice
+  encountered" / "Mean of empty slice") nos pontos sem nenhum dia valido
+  (oceano) - o resultado NaN e o esperado, mas o aviso poluia a saida da
+  rodada sazonal
 
-Documentacao:
+Documentacao e utilitarios:
+- confere_mswep.py: imprime a grade de um arquivo MSWEP real e o recorte
+  resultante (diagnostico rapido no servidor)
 - config_mswep.yaml (rodada observada com MSWEP) e config_exemplo.yaml
 - manual v2.6: secao 6.9 (MSWEP), 5.7 com frequencia prevista e 6.5
   ampliada (figuras de frequencia e percentil); README e docx/pdf"

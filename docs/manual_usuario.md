@@ -628,7 +628,7 @@ python3 fwi_observado.py --de 20260701 --ate 20260731 --media-mensal \
     --frequencia 22 --percentil 90
 ```
 
-Detalhes de implementação: valores ausentes são ignorados ponto a ponto (a frequência é sempre relativa aos **dias válidos** daquele ponto, e o número de dias entra no atributo `dias_agregados`); o percentil é calculado por blocos de latitude, para não carregar a série inteira na memória na grade de 1 km. O `rf_figura.py` reconhece os arquivos de frequência e usa uma escala sequencial de contagem em vez da paleta de risco.
+Detalhes de implementação: pontos sem nenhum campo válido (oceano, por exemplo) saem como ausentes, sem aviso na tela; valores ausentes são ignorados ponto a ponto (a frequência é sempre relativa aos **dias válidos** daquele ponto, e o número de dias entra no atributo `dias_agregados`); o percentil é calculado por blocos de latitude, para não carregar a série inteira na memória na grade de 1 km. O `rf_figura.py` reconhece os arquivos de frequência e usa uma escala sequencial de contagem em vez da paleta de risco.
 
 ### 6.9 Fonte da precipitação observada: IMERG ou MSWEP (prepara_mswep.py)
 
