@@ -4,8 +4,14 @@
 Cobre:
   1. detecção automática da variável (o MSWEP traz a variável sem nome
      reconhecível — o `cdo sinfo` mostra "unknown");
-  2. leitura in loco com recorte do domínio (grade global norte→sul) e o
-     caso da longitude 0..360;
+  2. leitura in loco com recorte do domínio (grade global norte→sul), o
+     caso da longitude 0..360 e o ruído de ponto flutuante das bordas;
+
+NOTA sobre os tamanhos impressos: os testes 1 a 5 usam uma grade global
+SINTÉTICA de 1° (180x360 pontos) só para rodarem em segundos.
+A grade verdadeira do MSWEP, de 0,1° (1800x3600, recorte 901x850), é
+exercitada no teste 2c (reconstruída com o mesmo ruído de coordenadas) e
+no teste 6 (arquivo real do disco, quando existe).
   3. conversão para o padrão do pipeline (prepara_mswep.py), inclusive a
      partir do arquivo mensal;
   4. seleção da fonte pelo config.yaml e pela linha de comando;
@@ -33,8 +39,11 @@ FIM = dt.datetime(2026, 7, 31)
 HORA = 18
 N_DIAS = 3
 
-# Grade "global" do teste: 1° (o MSWEP real é 0,1°), latitude do norte
-# para o sul e longitude -179,5..179,5, como nos arquivos originais.
+# Grade "global" SINTÉTICA dos testes 1 a 5: 1° (180x360), só para os
+# testes rodarem rápido. O MSWEP real é 0,1° (1800x3600) — a grade
+# verdadeira aparece no teste 2c (reconstruída) e no teste 6 (arquivo do
+# disco). A orientação é a do arquivo original: latitude do norte para o
+# sul e longitude -179,5..179,5.
 LAT_G = np.arange(89.5, -90.0, -1.0)
 LON_G = np.arange(-179.5, 180.0, 1.0)
 
@@ -124,7 +133,8 @@ def teste_recorte():
     assert dados_g.shape[1:] == (LAT_G.size, LON_G.size)
     assert lat_g[0] < lat_g[-1]
     print(f"2. recorte na leitura ({dados.shape[1]}x{dados.shape[2]} de "
-          f"{LAT_G.size}x{LON_G.size}) ok")
+          f"{LAT_G.size}x{LON_G.size}) ok  [grade sintetica de 1 grau; "
+          f"a real, de 0,1 grau (1800x3600), esta nos testes 2c e 6]")
 
 
 def teste_longitude_0_360():
@@ -137,6 +147,37 @@ def teste_longitude_0_360():
     assert np.all(np.diff(lon) > 0)
     assert np.allclose(dados[0], esperado)
     print("2b. arquivo com longitude 0..360 reordenado para -180..180 ok")
+
+
+def teste_borda_ruido_flutuante():
+    """As coordenadas do MSWEP real carregam ruído de ponto flutuante (o
+    `cdo sinfo` mostra a latitude indo a -89.95001). Sem folga na
+    comparação, o ponto exatamente na borda do domínio cai fora e a grade
+    encolhe uma linha/coluna — foi o que apareceu no ian01 (900x849 em vez
+    de 901x850). Aqui a grade global de 0,1° é reproduzida com o mesmo
+    ruído."""
+    lat = np.round(np.arange(89.95, -90.0, -0.1), 5)
+    lon = np.round(np.arange(-179.95, 180.0, 0.1), 5)
+    # ruído como o do arquivo real: uma parte em 1e-5, ambos os sinais
+    rng = np.random.default_rng(21)
+    lat_r = lat + rng.uniform(-2e-5, 2e-5, lat.size)
+    lon_r = lon + rng.uniform(-2e-5, 2e-5, lon.size)
+
+    caminho = os.path.join(TMP, "ruido.nc")
+    campo = np.zeros((lat.size, lon.size), dtype=np.float32)
+    xr.Dataset({"unknown": (("time", "lat", "lon"), campo[np.newaxis])},
+               coords={"time": [FIM], "lat": lat_r, "lon": lon_r}
+               ).to_netcdf(caminho)
+
+    dominio = (-60.05, 29.95, -114.95, -30.05)      # domínio do pipeline
+    _, la, lo = rf_core.le_precip_arquivo(caminho, None, dominio)
+    assert (la.size, lo.size) == (901, 850), (la.size, lo.size)
+
+    # e a grade resultante coincide com a do IMERG do pipeline
+    assert abs(la[0] - (-60.05)) < 1e-3 and abs(la[-1] - 29.95) < 1e-3
+    assert abs(lo[0] - (-114.95)) < 1e-3 and abs(lo[-1] - (-30.05)) < 1e-3
+    print("2c. borda com ruido de ponto flutuante: grade 901x850, igual "
+          "a do IMERG ok")
 
 
 # ---------------------------------------------------------------------------
@@ -381,9 +422,14 @@ def teste_mswep_real():
     assert validos.min() >= 0.0, validos.min()
     assert validos.max() < 2000.0, validos.max()        # mm/dia plausível
 
-    # A grade recortada tem de casar com a do IMERG do pipeline
+    # A grade recortada tem de casar EXATAMENTE com a do IMERG do
+    # pipeline (mesmo domínio, mesmo passo de 0,1°) — é o que permite
+    # comparar RF com MSWEP e RF com IMERG ponto a ponto.
     esperado = (901, 850)
-    assert dados.shape[1:] == esperado, (dados.shape[1:], esperado)
+    assert dados.shape[1:] == esperado, (
+        f"grade {dados.shape[1:]} != {esperado}: os pontos da borda do "
+        f"domínio foram perdidos (lat {lat[0]:.5f}..{lat[-1]:.5f}, "
+        f"lon {lon[0]:.5f}..{lon[-1]:.5f})")
 
     print(f"6. dado REAL {os.path.basename(caminho)}: variável '{nome}' "
           f"{forma} -> recorte {dados.shape[1:]} em {leitura:.1f}s; "
@@ -418,6 +464,7 @@ def main():
         teste_deteccao_variavel()
         teste_recorte()
         teste_longitude_0_360()
+        teste_borda_ruido_flutuante()
         teste_conversao()
         teste_conversao_mensal()
         config = teste_config()

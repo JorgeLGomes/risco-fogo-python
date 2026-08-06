@@ -796,7 +796,7 @@ man.push(p("A precipitação observada alimenta os 119 dias da janela do RF prev
 man.push(...codigo([
   "/pesq/dados/sismom/SisMOM/sipec/mswep/daily/{ano}/{mes}/{AAAAMMDD}.nc",
 ]));
-man.push(p("Os arquivos originais são globais de 0,1° (3600 x 1800), com latitude de norte para sul, longitude -179,95..179,95 e a variável sem nome reconhecível (o cdo sinfo mostra \"unknown\"). O pipeline resolve os três pontos sozinho: detecta a variável, inverte a latitude para sul->norte e recorta o domínio na leitura, de modo que a grade global nunca é carregada inteira na memória."));
+man.push(p("Os arquivos originais são globais de 0,1° (3600 x 1800), com latitude de norte para sul, longitude -179,95..179,95 e a variável sem nome reconhecível (o cdo sinfo mostra \"unknown\"). O pipeline resolve isso sozinho: detecta a variável, inverte a latitude para sul->norte e recorta o domínio na leitura, de modo que a grade global nunca é carregada inteira na memória. A comparação com os limites do domínio usa uma folga de 1 % do passo da grade, porque as coordenadas do arquivo trazem ruído de ponto flutuante (a latitude é declarada até -89,95001): sem essa folga, os pontos exatamente na borda cairiam fora e a grade sairia com uma linha e uma coluna a menos. Com ela, o recorte dá 901 x 850 pontos - exatamente a grade do IMERG, o que permite comparar as duas rodadas ponto a ponto."));
 man.push(p("A escolha é feita no config.yaml (ou na linha de comando, que prevalece):"));
 man.push(...codigo([
   "precipitacao:",

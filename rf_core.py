@@ -180,6 +180,17 @@ def nome_variavel_precip(ds, preferido=None):
                    f"(variáveis: {list(ds.data_vars)}).")
 
 
+def _tolerancia_borda(coord):
+    """Folga usada na comparação com os limites do recorte: 1 % do passo
+    da grade (mínimo 1e-6). Absorve o ruído de ponto flutuante das
+    coordenadas sem nunca alcançar o ponto vizinho."""
+    c = np.asarray(coord, dtype=np.float64)
+    if c.size < 2:
+        return 1e-6
+    passo = float(np.median(np.abs(np.diff(c))))
+    return max(1e-6, 0.01 * passo)
+
+
 def _indices_recorte(la, lo, recorte):
     """Índices (fatia em lat, vetor em lon) do recorte espacial pedido.
 
@@ -191,11 +202,20 @@ def _indices_recorte(la, lo, recorte):
         return None, None
     lat_s, lat_n, lon_w, lon_e = (float(x) for x in recorte)
 
-    mla = (la >= lat_s) & (la <= lat_n)
+    # Tolerância nas bordas: as coordenadas dos arquivos globais carregam
+    # ruído de ponto flutuante (o MSWEP declara a latitude indo até
+    # -89.95001, não -89.95), e sem folga o ponto exatamente na borda do
+    # domínio cai fora do >=, encolhendo a grade em uma linha/coluna. A
+    # folga é 1 % do passo — muito acima do ruído (~1e-5) e muito abaixo
+    # de meia célula, então nunca inclui um ponto vizinho.
+    tol_lat = _tolerancia_borda(la)
+    tol_lon = _tolerancia_borda(lo)
+
+    mla = (la >= lat_s - tol_lat) & (la <= lat_n + tol_lat)
     ila = np.nonzero(mla)[0]
 
     lo180 = ((np.asarray(lo, dtype=np.float64) + 180.0) % 360.0) - 180.0
-    mlo = (lo180 >= lon_w) & (lo180 <= lon_e)
+    mlo = (lo180 >= lon_w - tol_lon) & (lo180 <= lon_e + tol_lon)
     ilo = np.nonzero(mlo)[0]
     if ilo.size:
         ilo = ilo[np.argsort(lo180[ilo])]     # garante longitude crescente

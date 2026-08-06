@@ -297,7 +297,10 @@ MSWEP (fonte alternativa a precipitacao observada do IMERG):
   variavel (o MSWEP vem como 'unknown'), recorte do dominio e selecao do
   passo de tempo aplicados ANTES da leitura (a grade global 3600x1800 e o
   mes inteiro nunca entram na memoria), fatia em vez de vetor de indices
-  quando o recorte e contiguo, e reordenacao de longitude 0..360;
+  quando o recorte e contiguo, folga de 1 % do passo na comparacao com os
+  limites do dominio (as coordenadas do MSWEP tem ruido de ponto
+  flutuante - lat ate -89.95001 - e sem folga a grade saia 900x849 em vez
+  de 901x850) e reordenacao de longitude 0..360;
   ler_precipitacao recusa arquivos com varios passos quando a serie
   diaria espera um dia por arquivo
 - prepara_mswep.py: converte os arquivos locais do MSWEP para o padrao do
