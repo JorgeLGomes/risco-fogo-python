@@ -16,12 +16,26 @@ os padrões da produção:
     imerg_dir:        pasta raiz do IMERG diário
     imerg_subpastas:  subpastas por data (marcadores {ano}, {mes}, {dia})
     imerg_padrao:     nome do arquivo IMERG (marcador {data} = YYYYMMDD)
+    mswep_dir:        pasta raiz do MSWEP diário ORIGINAL (global 0,1°)
+    mswep_subpastas:  subpastas por data do MSWEP original
+    mswep_padrao:     nome do arquivo MSWEP original ({data} = YYYYMMDD)
+    mswep_conv_dir/subpastas/padrao: idem, para os arquivos MSWEP já
+                      convertidos ao padrão do pipeline (prepara_mswep.py)
     mapa_vegetacao:   mapa de vegetação 1 km (marcador {ano_veg})
     topografia:       arquivo de topografia 1 km
     log:              pasta de logs
 
   fontes:    mesmas chaves do --config-fontes (rf_fontes.py): ajusta ou
              acrescenta fontes de previsão (gfs, eta, besm, ...).
+
+  precipitacao: fonte da precipitação OBSERVADA (a janela de 120 dias do
+             RF, o RF observado e o FWI observado):
+    fonte:     "imerg" (padrão) ou "mswep"
+    modo:      "in_loco" (lê os arquivos originais, recortando o domínio
+               na leitura) ou "convertido" (usa a cópia gerada pelo
+               prepara_mswep.py, no padrão do pipeline)
+    variavel:  nome da variável no arquivo ("auto" detecta sozinho)
+    dominio:   recorte "latS,latN,lonW,lonE" aplicado na leitura in loco
 
   era5:      horário das variáveis meteorológicas dos produtos observados
              (RF e FWI observados) — ver era5_tempo.py:
@@ -65,6 +79,14 @@ CAMINHOS_PADRAO = {
     "imerg_dir": "data/output/2.2/Precipitation-2_2",
     "imerg_subpastas": "{ano}/{mes}",
     "imerg_padrao": "INPE_FireRiskModel_2.2_Precipitation_{data}.nc",
+    # MSWEP original (como está no disco do CPTEC), lido in loco
+    "mswep_dir": "/pesq/dados/sismom/SisMOM/sipec/mswep/daily",
+    "mswep_subpastas": "{ano}/{mes}",
+    "mswep_padrao": "{data}.nc",
+    # MSWEP já convertido ao padrão do pipeline (prepara_mswep.py)
+    "mswep_conv_dir": "data/output/2.2/MSWEP-2_2",
+    "mswep_conv_subpastas": "{ano}/{mes}",
+    "mswep_conv_padrao": "INPE_FireRiskModel_2.2_Precipitation_MSWEP_{data}.nc",
     "mapa_vegetacao": "data/input/Veg_Map_2020/"
                       "Merge_MapBiomas_V5_IGBP_C6_{ano_veg}.nc",
     "topografia": "data/input/topografia/GeoTOPOAmericaSulCentral_V3.nc",
@@ -79,7 +101,19 @@ EXECUCAO_CHAVES = ("fonte", "horizontes", "de", "ate", "passo", "data_final",
                    "rb_max", "produto", "jobs", "fallback_gfs", "sem_tif",
                    "fogograma", "sem_vegetacao", "sem_topografia",
                    "classe_veg", "media", "media_mensal", "maximo",
-                   "correcao_ur")
+                   "correcao_ur", "precipitacao")
+
+# Seção "precipitacao": fonte da precipitação OBSERVADA.
+DOMINIO_PADRAO = "-60.05,29.95,-114.95,-30.05"    # latS,latN,lonW,lonE
+
+PRECIPITACAO_PADRAO = {
+    "fonte": "imerg",        # "imerg" | "mswep"
+    "modo": "in_loco",       # "in_loco" | "convertido"  (só afeta o MSWEP)
+    "variavel": "auto",      # nome da variável no arquivo ("auto" detecta)
+    "dominio": DOMINIO_PADRAO,   # recorte aplicado na leitura in loco
+}
+
+FONTES_PRECIPITACAO = ("imerg", "mswep")
 
 # Seção "era5": horário das variáveis meteorológicas dos produtos
 # observados (ver era5_tempo.py).
@@ -90,7 +124,8 @@ ERA5_PADRAO = {
     "horas": None,         # lista explícita de horas UTC a baixar/usar
 }
 
-SECOES_VALIDAS = {"base", "caminhos", "fontes", "execucao", "era5"}
+SECOES_VALIDAS = {"base", "caminhos", "fontes", "execucao", "era5",
+                  "precipitacao"}
 
 
 def carrega(caminho):
@@ -134,6 +169,15 @@ def carrega(caminho):
             f"Válidas: {sorted(ERA5_PADRAO)}.")
     era5.update(extras_era5)
 
+    precipitacao = copy.deepcopy(PRECIPITACAO_PADRAO)
+    extras_prec = cfg.get("precipitacao") or {}
+    invalidas = set(extras_prec) - set(PRECIPITACAO_PADRAO)
+    if invalidas:
+        raise ValueError(
+            f"Chaves desconhecidas em 'precipitacao': {sorted(invalidas)}. "
+            f"Válidas: {sorted(PRECIPITACAO_PADRAO)}.")
+    precipitacao.update(extras_prec)
+
     execucao = cfg.get("execucao") or {}
     invalidas = set(execucao) - set(EXECUCAO_CHAVES)
     if invalidas:
@@ -141,13 +185,37 @@ def carrega(caminho):
             f"Chaves desconhecidas em 'execucao': {sorted(invalidas)}. "
             f"Válidas: {sorted(EXECUCAO_CHAVES)}.")
 
+    # "execucao: precipitacao: mswep" é um atalho para "precipitacao: fonte"
+    if execucao.get("precipitacao"):
+        precipitacao["fonte"] = str(execucao["precipitacao"]).lower()
+
+    valida_precipitacao(precipitacao)
+
     return {
         "base": cfg.get("base") or BASE_PADRAO,
         "caminhos": caminhos,
         "fontes": cfg.get("fontes") or {},
         "execucao": execucao,
         "era5": era5,
+        "precipitacao": precipitacao,
     }
+
+
+def valida_precipitacao(precipitacao):
+    """Confere a seção 'precipitacao' e normaliza os valores."""
+    fonte = str(precipitacao.get("fonte") or "imerg").lower()
+    if fonte not in FONTES_PRECIPITACAO:
+        raise ValueError(
+            f"Fonte de precipitação observada desconhecida: '{fonte}'. "
+            f"Válidas: {', '.join(FONTES_PRECIPITACAO)}.")
+    modo = str(precipitacao.get("modo") or "in_loco").lower()
+    if modo not in ("in_loco", "convertido"):
+        raise ValueError(
+            f"Modo de leitura da precipitação desconhecido: '{modo}'. "
+            f"Válidos: in_loco, convertido.")
+    precipitacao["fonte"] = fonte
+    precipitacao["modo"] = modo
+    return precipitacao
 
 
 def padrao():
@@ -158,6 +226,7 @@ def padrao():
         "fontes": {},
         "execucao": {},
         "era5": copy.deepcopy(ERA5_PADRAO),
+        "precipitacao": copy.deepcopy(PRECIPITACAO_PADRAO),
     }
 
 
@@ -174,6 +243,84 @@ def caminho_imerg(base, caminhos, dia):
         ano=ymd[:4], mes=ymd[4:6], dia=ymd[6:8])
     nome = caminhos["imerg_padrao"].format(data=ymd)
     return os.path.join(resolve(base, caminhos["imerg_dir"]), sub, nome)
+
+
+def caminho_mswep(base, caminhos, dia, convertido=False):
+    """Caminho do arquivo MSWEP diário do dia (datetime).
+
+    ``convertido=False`` devolve o arquivo ORIGINAL (global 0,1°, como
+    está no disco do CPTEC); ``True`` devolve a cópia já convertida ao
+    padrão do pipeline pelo prepara_mswep.py."""
+    ymd = dia.strftime("%Y%m%d")
+    p = "mswep_conv_" if convertido else "mswep_"
+    sub = caminhos[p + "subpastas"].format(
+        ano=ymd[:4], mes=ymd[4:6], dia=ymd[6:8])
+    nome = caminhos[p + "padrao"].format(data=ymd)
+    return os.path.join(resolve(base, caminhos[p + "dir"]), sub, nome)
+
+
+def caminho_precipitacao(base, caminhos, dia, precipitacao=None):
+    """Caminho do arquivo de precipitação OBSERVADA do dia, conforme a
+    seção 'precipitacao' da configuração (IMERG ou MSWEP)."""
+    cfg = precipitacao or PRECIPITACAO_PADRAO
+    if str(cfg.get("fonte", "imerg")).lower() == "mswep":
+        return caminho_mswep(base, caminhos, dia,
+                             convertido=cfg.get("modo") == "convertido")
+    return caminho_imerg(base, caminhos, dia)
+
+
+def variavel_precipitacao(precipitacao=None):
+    """Nome da variável de precipitação a ler (None = detecção automática).
+
+    Os arquivos do pipeline (IMERG e MSWEP convertido) usam sempre `prec`;
+    o MSWEP original é lido com detecção automática, a menos que o nome
+    seja declarado em 'precipitacao: variavel:'."""
+    cfg = precipitacao or PRECIPITACAO_PADRAO
+    declarada = cfg.get("variavel")
+    if declarada and str(declarada).lower() not in ("auto", "none", ""):
+        return str(declarada)
+    if (str(cfg.get("fonte", "imerg")).lower() == "mswep"
+            and cfg.get("modo") != "convertido"):
+        return None                      # detecta sozinho
+    return "prec"
+
+
+def recorte_precipitacao(precipitacao=None):
+    """Recorte (latS, latN, lonW, lonE) a aplicar na leitura, ou None.
+
+    Só é usado na leitura in loco de arquivos globais (MSWEP original);
+    os arquivos do pipeline já vêm recortados."""
+    cfg = precipitacao or PRECIPITACAO_PADRAO
+    if (str(cfg.get("fonte", "imerg")).lower() != "mswep"
+            or cfg.get("modo") == "convertido"):
+        return None
+    dominio = cfg.get("dominio") or DOMINIO_PADRAO
+    if isinstance(dominio, str):
+        dominio = [float(x) for x in dominio.split(",")]
+    valores = tuple(float(x) for x in dominio)
+    if len(valores) != 4:
+        raise ValueError("'precipitacao: dominio' deve ter 4 valores: "
+                         "latS,latN,lonW,lonE.")
+    return valores
+
+
+def descricao_precipitacao(precipitacao=None):
+    """Texto curto da fonte de precipitação observada, para os cabeçalhos."""
+    cfg = precipitacao or PRECIPITACAO_PADRAO
+    fonte = str(cfg.get("fonte", "imerg")).lower()
+    if fonte != "mswep":
+        return "IMERG (GPM/NASA)"
+    modo = ("arquivos originais, recorte na leitura"
+            if cfg.get("modo") != "convertido"
+            else "cópia convertida (prepara_mswep.py)")
+    return f"MSWEP ({modo})"
+
+
+def sufixo_precipitacao(precipitacao=None):
+    """Sufixo do nome do produto quando a fonte não é a padrão (IMERG)."""
+    cfg = precipitacao or PRECIPITACAO_PADRAO
+    fonte = str(cfg.get("fonte", "imerg")).lower()
+    return "" if fonte == "imerg" else "_" + fonte.upper()
 
 
 def caminho_era5(base, caminhos, dia, hora, vento=False):

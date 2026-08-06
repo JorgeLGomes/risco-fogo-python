@@ -168,6 +168,61 @@ def teste_agregacoes():
           f"({len(diarios)} dias)")
 
 
+def teste_frequencia_percentil():
+    """--frequencia e --percentil geram arquivos adicionais, conferidos
+    contra o cálculo direto."""
+    dir_out = f"{BASE}/data/output/2.2/RF_OBS_SEMVEG_SEMTOPO/netcdf"
+    ini = (FIM - dt.timedelta(days=4)).strftime("%Y%m%d")
+    cmd = [sys.executable, "rf_observado.py", "--base", BASE,
+           "--de", ini, "--ate", FIM.strftime("%Y%m%d"),
+           "--sem-vegetacao", "--sem-topografia", "--so-agrega",
+           "--media", "--frequencia", "0.3", "--percentil", "90"]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    periodo = f"{ini}-{FIM:%Y%m%d}"
+    arq_freq = os.path.join(dir_out, f"RF.OBS.FREQ0.3.{periodo}.nc")
+    arq_p90 = os.path.join(dir_out, f"RF.OBS.P90.{periodo}.nc")
+    assert os.path.exists(arq_freq) and os.path.exists(arq_p90), \
+        sorted(os.listdir(dir_out))
+
+    diarios = sorted(f for f in os.listdir(dir_out)
+                     if f.startswith("RF.OBS.2") and f.endswith("18.nc"))
+    pilha = []
+    for nome in diarios:
+        with xr.open_dataset(os.path.join(dir_out, nome),
+                             decode_times=False) as ds:
+            v = ds[list(ds.data_vars)[0]].values[0]
+        pilha.append(np.where(v <= -998, np.nan, v))
+    P = np.stack(pilha)
+    validos = np.sum(~np.isnan(P), axis=0)
+
+    with xr.open_dataset(arq_freq, decode_times=False) as ds:
+        assert set(ds.data_vars) == {"dias", "frequencia"}, list(ds.data_vars)
+        assert ds.attrs["limiar"] == "0.3"
+        dias = np.where(ds["dias"].values[0] <= -998, np.nan,
+                        ds["dias"].values[0])
+        pct = np.where(ds["frequencia"].values[0] <= -998, np.nan,
+                       ds["frequencia"].values[0])
+    esperado = np.where(validos > 0,
+                        np.nansum(np.where(np.isnan(P), 0, P >= 0.3), axis=0),
+                        np.nan)
+    assert np.allclose(dias, esperado, equal_nan=True)
+    assert np.allclose(pct, np.round(np.where(validos > 0,
+                                              100.0 * esperado /
+                                              np.maximum(validos, 1),
+                                              np.nan), 1),
+                       equal_nan=True, atol=0.06)
+
+    with xr.open_dataset(arq_p90, decode_times=False) as ds:
+        assert "percentil" in ds.attrs["agregacao"]
+        obt = ds[list(ds.data_vars)[0]].values[0]
+    obt = np.where(obt <= -998, np.nan, obt)
+    esp = np.round(np.nanpercentile(P.astype(np.float64), 90, axis=0), 2)
+    assert np.allclose(obt, esp, equal_nan=True, atol=1e-6)
+    print(f"Frequencia (dias e %) e percentil 90 ok ({len(diarios)} dias)")
+
+
 def teste_figura():
     """rf_figura.py gera PNG a partir dos NetCDF do RF."""
     dir_out = f"{BASE}/data/output/2.2/RF_OBS_SEMVEG_SEMTOPO/netcdf"
@@ -204,6 +259,7 @@ if __name__ == "__main__":
         teste_simular()
         teste_calculo()
         teste_agregacoes()
+        teste_frequencia_percentil()
         teste_figura()
         print()
         print("TODOS OS TESTES DO RF_OBSERVADO PASSARAM")

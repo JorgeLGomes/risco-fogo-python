@@ -1,0 +1,57 @@
+# ============================================================================
+# Rodada OBSERVADA usando o MSWEP como precipitação (RF e FWI)
+# ============================================================================
+# Uso:
+#   python3 rf_observado.py  --config config_mswep.yaml --dias 7
+#   python3 fwi_observado.py --config config_mswep.yaml --dias 30
+#   python3 rf_previsto.py   --config config_mswep.yaml --horizontes 3d
+#
+# A precipitação observada vem do MSWEP já disponível no disco do CPTEC —
+# não há download. Os arquivos originais são globais (3600 x 1800, 0,1°,
+# latitude norte→sul): o pipeline detecta a variável, inverte a latitude e
+# recorta o domínio NA LEITURA. Os produtos ganham o sufixo _MSWEP
+# (RF_OBS_MSWEP, FWI_OBS_MSWEP), então nunca se misturam com o IMERG.
+# Ver seção 6.9 do manual.
+# ============================================================================
+
+base: /p/projetos/grpeta/Team/jorge.gomes/risco-fogo-python
+
+caminhos:
+  # MSWEP original (ajuste se o caminho do disco mudar)
+  mswep_dir: /pesq/dados/sismom/SisMOM/sipec/mswep/daily
+  mswep_subpastas: "{ano}/{mes}"
+  mswep_padrao: "{data}.nc"
+
+  # Cópia convertida (só usada com modo: convertido)
+  mswep_conv_dir: data/output/2.2/MSWEP-2_2
+  mswep_conv_subpastas: "{ano}/{mes}"
+  mswep_conv_padrao: "INPE_FireRiskModel_2.2_Precipitation_MSWEP_{data}.nc"
+
+  era5_dir: data/output/2.2/ERA5/netcdf
+  era5_padrao: "ERA5.OBS.TEMP2m.RH2m.{data}{hora}.nc"
+  era5_padrao_vento: "ERA5.OBS.U10m.V10m.{data}{hora}.nc"
+  log: log
+
+precipitacao:
+  fonte: mswep
+  # in_loco: lê os arquivos originais (nada a preparar).
+  # convertido: usa a cópia recortada do prepara_mswep.py — mais rápido na
+  # rodada diária, que relê a janela de 120 dias:
+  #   python3 prepara_mswep.py --config config_mswep.yaml
+  modo: in_loco
+  variavel: auto
+  dominio: "-60.05,29.95,-114.95,-30.05"
+
+era5:
+  horario: fixo
+  hora: 18
+  hora_local: 15
+
+execucao:
+  # Enquanto os arquivos estáticos não chegarem do Queimadas:
+  sem_vegetacao: true
+  sem_topografia: true
+  classe_veg: 4
+  correcao_ur: ncl
+  jobs: 4
+  sem_tif: false

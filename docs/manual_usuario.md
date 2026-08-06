@@ -2,7 +2,7 @@
 
 ## Risco de Fogo Previsto em Python — INPE_FireRiskModel v2.2
 
-**Versão:** 2.4 · 5 de agosto de 2026
+**Versão:** 2.6 · 6 de agosto de 2026
 **Substitui:** `rf_previsto_1-5dias_2023.sh` e `rf_previsto_1-2_semanas_2024.sh` (bash + NCL)
 
 ---
@@ -43,6 +43,7 @@ Não são mais necessários: NCL, cdo, gdal (binário), GNU parallel nem o ambie
 | Dado | Local esperado | Observação |
 |---|---|---|
 | Precipitação IMERG (diária) | `data/output/2.2/Precipitation-2_2/AAAA/MM/INPE_FireRiskModel_2.2_Precipitation_AAAAMMDD.nc` | 119 dias anteriores à data de execução; variável `prec` |
+| Precipitação MSWEP (alternativa) | `/pesq/dados/sismom/SisMOM/sipec/mswep/daily/AAAA/MM/AAAAMMDD.nc` | opcional (seção 6.9); global 0,1°, lida in loco com recorte do domínio |
 | Previsões do GFS | `data/output/2.2/GFS/netcdf/AAAAMMDD00/` | `GFS.PREV.PREC.<modelo>.<previsão>.nc` e `GFS.PREV.TEMP2m.RH2m.<modelo>.<previsão>.nc` |
 | Mapa de vegetação 1 km | `data/input/Veg_Map_2020/Merge_MapBiomas_V5_IGBP_C6_<ano>.nc` | variável `Band1`, classes 0–7, orientado de sul para norte; anos ≥ 2020 usam o mapa de 2019 |
 | Topografia 1 km | `data/input/topografia/GeoTOPOAmericaSulCentral_V3.nc` | variável `Band1` (metros), mesma grade do mapa de vegetação |
@@ -227,12 +228,14 @@ Os arquivos das fontes devem ser NetCDF em grade regular lat/lon (como os do GFS
 
 ### 5.5 Arquivo de configuração YAML (--config)
 
-O `--config arquivo.yaml` centraliza toda a configuração dos dados de entrada num único arquivo YAML (ou JSON), com três seções opcionais — o que não for informado usa os padrões da produção, e a linha de comando sempre prevalece sobre o arquivo:
+O `--config arquivo.yaml` centraliza toda a configuração dos dados de entrada num único arquivo YAML (ou JSON), com seções opcionais — o que não for informado usa os padrões da produção, e a linha de comando sempre prevalece sobre o arquivo. **Todos os scripts do pacote leem o mesmo arquivo**, cada um usando as seções que lhe interessam:
 
 | Seção | Conteúdo |
 |---|---|
 | `base` | Diretório base do modelo; os caminhos relativos são ancorados nele |
-| `caminhos` | Onde estão os dados de entrada: `imerg_dir`, `imerg_subpastas` (`{ano}/{mes}`), `imerg_padrao` (`{data}`), `mapa_vegetacao` (`{ano_veg}`), `topografia`, `log` |
+| `caminhos` | Onde estão os dados de entrada: `imerg_dir`, `imerg_subpastas` (`{ano}/{mes}`), `imerg_padrao` (`{data}`), `mswep_dir`/`mswep_subpastas`/`mswep_padrao` (MSWEP original), `mswep_conv_*` (MSWEP convertido), `mapa_vegetacao` (`{ano_veg}`), `topografia`, `era5_dir`, `era5_padrao`, `era5_padrao_vento`, `log` |
+| `precipitacao` | Fonte da precipitação **observada** (seção 6.9): `fonte` (`imerg`/`mswep`), `modo` (`in_loco`/`convertido`), `variavel`, `dominio` |
+| `era5` | Horário das variáveis meteorológicas observadas (seção 6.6): `horario`, `hora`, `hora_local`, `horas` |
 | `fontes` | Mesmas chaves do `--config-fontes`: ajusta ou acrescenta fontes (gfs, eta, besm, ...) |
 | `execucao` | Padrões da linha de comando: `fonte`, `horizontes` ou `de`/`ate`/`passo`, `data_final`, `rb_max`, `produto`, `jobs`, `fallback_gfs`, `sem_tif`, `fogograma`, `sem_vegetacao`, `sem_topografia`, `classe_veg` |
 
@@ -285,12 +288,16 @@ Observação: como a saída `_SEMVEG` fica na grade da precipitação (≈10 km)
 
 Cada horizonte gera o seu `RF.PREV.{data}{hora}.nc`. Para obter o **risco médio** — típico das rodadas sazonais (Eta/BESM), em que interessa o mês e não o dia — o `rf_previsto.py` agrega os campos ao final:
 
-| Opção | Saída |
-|---|---|
-| `--media-mensal` | `RF.PREV.MEDIA.AAAAMM.nc` — uma média por mês-calendário coberto pelas previsões |
-| `--media` | `RF.PREV.MEDIA.{ini}-{fim}.nc` — média de toda a rodada |
-| `--maximo` | usa o **máximo** em vez da média (`RF.PREV.MAXIMO.*`) |
-| `--so-agrega` | não recalcula nada: agrega os arquivos já existentes da rodada |
+| Opção | Papel | Saída |
+|---|---|---|
+| `--media-mensal` | agrupamento | uma agregação por mês-calendário coberto pelas previsões |
+| `--media` | agrupamento | uma agregação de toda a rodada |
+| `--maximo` | operação | usa o **máximo** em vez da média (`RF.PREV.MAXIMO.*`) |
+| `--frequencia L` | operação **adicional** | nº de previsões com valor ≥ L e o **percentual** delas (`RF.PREV.FREQ<L>.*`, variáveis `dias` e `frequencia`) |
+| `--percentil N` | operação **adicional** | percentil N da distribuição (`RF.PREV.P<N>.*`) |
+| `--so-agrega` | — | não recalcula nada: agrega os arquivos já existentes da rodada |
+
+As opções de agrupamento dizem **sobre o quê** agregar (o mês ou a rodada inteira) e as de operação dizem **como**. `--frequencia` e `--percentil` são acumulativas: pedidas junto com `--media-mensal`, geram, para cada mês, a média **e** os campos de frequência e percentil.
 
 Os campos são agrupados pela **data válida** de cada previsão, e as médias ignoram valores ausentes ponto a ponto (o número de campos usados vai no atributo global `dias_agregados`). As mesmas chaves existem no YAML (`media_mensal`, `media`, `maximo`).
 
@@ -319,7 +326,7 @@ python3 rf_figura.py <saida>/RF.PREV.MEDIA.2026*.nc --painel --colunas 4 \
 
 Atenção ao **passo**: ele tem a mesma unidade dos horizontes e precisa ser compatível com o intervalo — `--de 6h --ate 4d18h --passo 1m` não produz nada útil (o primeiro passo já ultrapassa o fim).
 
-## 6. Preparo dos dados, RF observado e figuras (prepara_gfs, prepara_imerg, prepara_era5, rf_observado, rf_figura)
+## 6. Preparo dos dados, RF observado e figuras (prepara_gfs, prepara_imerg, prepara_mswep, prepara_era5, rf_observado, rf_figura)
 
 Três scripts geram o banco de dados de entrada do RF sem depender da área de produção do Programa Queimadas: o `prepara_gfs.py` (previsões), o `prepara_imerg.py` (precipitação observada) e o `prepara_era5.py` (temperatura/umidade da reanálise ERA5, seção 6.3). Com os dois primeiros, o fluxo completo de uma rodada prevista é:
 
@@ -390,6 +397,8 @@ python3 prepara_imerg.py --simular                 # confere período e URLs
 
 O script pula dias já existentes (rodar de novo completa o que faltou; `--sobrescrever` regrava), tenta as letras de versão da NASA automaticamente (V07D→V07A), baixa em paralelo (`--jobs`) e trata a transposição lon/lat e os valores inválidos do formato IMERG. Cada dia baixa ~25 MB do arquivo global e grava ~2–3 MB recortados. Produtos: `early` (padrão), `late` (~14 h) e `final` (pesquisa, meses de latência — ideal para períodos históricos).
 
+O IMERG é a fonte **padrão** de precipitação observada, mas não a única: a seção 6.9 mostra como trocá-la pelo **MSWEP** já disponível no disco do CPTEC, sem download.
+
 ### 6.3 ERA5 (prepara_era5.py)
 
 O `prepara_era5.py` baixa a reanálise **ERA5** (Copernicus/ECMWF, 0,25°) e converte para o padrão de leitura do RF: temperatura a 2 m, **umidade relativa a 2 m calculada da temperatura + ponto de orvalho** (fórmula de Magnus, Alduchov & Eskridge 1996) e vento a 10 m (u10/v10, para uso futuro). Para cada dia são gravados dois arquivos no destino da chave `era5_dir` do `config.yaml`:
@@ -451,6 +460,8 @@ O fluxo completo é: `prepara_imerg.py` (precipitação do período **+ 119 dias
 | `--media` | `RF.OBS.MEDIA.{ini}-{fim}.nc` — média de todo o período |
 | `--media-mensal` | `RF.OBS.MEDIA.AAAAMM.nc` — uma média por mês-calendário do período |
 | `--maximo` | usa o **máximo** em vez da média (arquivos `RF.OBS.MAXIMO.*`) |
+| `--frequencia L` | `RF.OBS.FREQ<L>.*` — nº de dias com RF ≥ L (variável `dias`) e o percentual dos dias válidos (variável `frequencia`) |
+| `--percentil N` | `RF.OBS.P<N>.*` — percentil N da distribuição dos dias |
 | `--mergetime` | `RF.OBS.SERIE.{ini}-{fim}.nc` — todos os dias num só arquivo, com eixo de tempo |
 | `--so-agrega` | não recalcula nada: agrega os diários **já existentes** no período |
 
@@ -533,6 +544,80 @@ python3 rf_previsto.py  --horizontes 3d --correcao-ur percentual
 ```
 
 Qualquer valor diferente de `ncl` acrescenta sufixo ao produto (`_URDEC`, `_URPER`) e registra a escolha no atributo global `escala_ur_no_FU`, para nunca se misturar com a rodada de referência. **Recomendação:** tratar como análise de sensibilidade e validar com o autor do modelo antes de qualquer mudança na operação.
+
+### 6.8 Qual métrica usar no produto mensal
+
+A média dos dias é a leitura mais simples, mas não é a única — e para risco de fogo raramente é suficiente sozinha. A distribuição do RF é assimétrica e o impacto vem da cauda: um mês com 25 dias tranquilos e 5 críticos pode ter a mesma média de um mês com 30 dias medianos, com comportamento do fogo completamente diferente.
+
+| Métrica | Quando usar |
+|---|---|
+| **Média** (`--media`, `--media-mensal`) | condição típica do mês; bom para mapa climatológico e comparação entre meses |
+| **Frequência** (`--frequencia 0.7`) | leitura operacional direta — "neste mês, 12 dias de risco Alto ou Crítico"; é também a forma que vira *probabilidade* quando aplicada aos membros de um ensemble em vez dos dias |
+| **Percentil** (`--percentil 90`) | pega a cauda sem depender de um único dia; base natural para expressar o índice em percentis da climatologia local |
+| **Máximo** (`--maximo`) | diagnóstico apenas — um único dia com erro de modelo domina o campo |
+
+```bash
+# Julho de 2026: média, dias com RF >= 0,7 e percentil 90 do mês
+python3 rf_observado.py --de 20260701 --ate 20260731 --media-mensal \
+    --frequencia 0.7 --percentil 90
+```
+
+**No FWI a resposta é canônica:** o índice **não deve ser promediado** — a relação dele com a dificuldade de controle não é linear. Van Wagner criou o **DSR** (Daily Severity Rating) justamente para poder ser promediado, e o produto mensal padrão do sistema é o **MSR (Monthly Severity Rating) = média do DSR**:
+
+```bash
+# MSR: produto mensal recomendado do sistema canadense
+python3 fwi_observado.py --de 20260701 --ate 20260731 --media-mensal \
+    --var-agrega DSR
+
+# Dias de perigo alto (FWI >= 22) e percentil 90 do mês
+python3 fwi_observado.py --de 20260701 --ate 20260731 --media-mensal \
+    --frequencia 22 --percentil 90
+```
+
+Detalhes de implementação: valores ausentes são ignorados ponto a ponto (a frequência é sempre relativa aos **dias válidos** daquele ponto, e o número de dias entra no atributo `dias_agregados`); o percentil é calculado por blocos de latitude, para não carregar a série inteira na memória na grade de 1 km. O `rf_figura.py` reconhece os arquivos de frequência e usa uma escala sequencial de contagem em vez da paleta de risco.
+
+### 6.9 Fonte da precipitação observada: IMERG ou MSWEP (prepara_mswep.py)
+
+A precipitação observada alimenta os 119 dias da janela do RF previsto, o RF observado e o FWI observado. Por padrão ela vem do **IMERG**, baixado pelo `prepara_imerg.py`. Como alternativa, o pipeline lê o **MSWEP** (*Multi-Source Weighted-Ensemble Precipitation*), que já está no disco do CPTEC e portanto dispensa download:
+
+```
+/pesq/dados/sismom/SisMOM/sipec/mswep/daily/{ano}/{mes}/{AAAAMMDD}.nc
+```
+
+Os arquivos originais são globais de 0,1° (3600 × 1800), com latitude de norte para sul, longitude −179,95..179,95 e a variável sem nome reconhecível (o `cdo sinfo` mostra "unknown"). O pipeline resolve os três pontos sozinho: **detecta a variável**, **inverte a latitude** para sul→norte e **recorta o domínio na leitura**, de modo que a grade global nunca é carregada inteira na memória.
+
+A escolha é feita no `config.yaml` (ou na linha de comando, que prevalece):
+
+```yaml
+precipitacao:
+  fonte: mswep           # imerg (padrão) | mswep
+  modo: in_loco          # in_loco (arquivos originais) | convertido
+  variavel: auto         # nome da variável no arquivo (auto detecta)
+  dominio: "-60.05,29.95,-114.95,-30.05"   # recorte da leitura in loco
+```
+
+```bash
+python3 rf_observado.py  --config config.yaml --dias 7  --precipitacao mswep
+python3 fwi_observado.py --config config.yaml --dias 30 --precipitacao mswep
+python3 rf_previsto.py   --config config.yaml --horizontes 3d --precipitacao mswep
+```
+
+Os produtos ganham o sufixo **`_MSWEP`** (`RF_OBS_MSWEP`, `FWI_OBS_MSWEP`, `RF_PREV_GFS_MSWEP`...), de modo que uma rodada com MSWEP nunca sobrescreve a rodada de referência com IMERG — as duas podem ser comparadas ponto a ponto.
+
+**Converter é opcional.** No modo `in_loco` (padrão) nada precisa ser preparado. O `prepara_mswep.py` grava uma cópia já recortada no padrão do pipeline (~2 MB/dia em vez de ~7 MB globais), o que compensa quando a mesma janela de 120 dias é relida todo dia, quando o disco do MSWEP é lento ou indisponível na hora da rodada, ou quando se quer congelar uma versão do banco para reprocessamento:
+
+```bash
+# Converte a janela de 119 dias que antecede hoje
+python3 prepara_mswep.py --config config.yaml
+
+# Período explícito, e conferência sem gravar
+python3 prepara_mswep.py --config config.yaml --inicio 20230101 --fim 20230131
+python3 prepara_mswep.py --config config.yaml --simular
+```
+
+Depois, basta trocar `modo: in_loco` por `modo: convertido` (ou usar `--modo-precipitacao convertido`). O script é incremental — pula os dias já convertidos, `--sobrescrever` regrava — e, se o arquivo diário não existir, tenta automaticamente o arquivo **mensal** da mesma pasta (`jan.nc`, `feb.nc`, ...), extraindo o dia pedido pelo eixo de tempo. As duas formas de leitura foram verificadas ponto a ponto: `teste_mswep.py` confirma que o RF observado sai idêntico in loco e convertido.
+
+**Qual usar?** O IMERG é o dado da operação do Queimadas e tem latência de ~4 h, o que o torna obrigatório na rodada diária. O MSWEP combina satélite, estações e reanálise, costuma representar melhor a chuva sobre áreas com rede de superfície densa e cobre desde 1979 — sendo mais adequado a reconstruções históricas, calibração e comparação de sensibilidade da precipitação, que é a variável de maior peso no RF (os 120 acumulados diários). Como as duas rodadas escrevem em produtos separados, a comparação é direta.
 
 ## 7. FWI — Canadian Fire Weather Index System
 
@@ -658,6 +743,7 @@ python3 teste_rf_previsto.py   # valida o script genérico de ponta a ponta
 python3 teste_rf_multifonte.py # valida o modo multifonte (Eta 13m, BESM 12h, JSON)
 python3 teste_prepara_gfs.py   # valida o preparo do GFS (idx, baldes, NetCDF)
 python3 teste_prepara_imerg.py # valida o preparo do IMERG (conversão, caminhos)
+python3 teste_mswep.py         # valida a fonte MSWEP (detecção da variável, recorte, conversão)
 python3 teste_prepara_era5.py  # valida o preparo da ERA5 (UR de T+Td, conversão)
 python3 teste_rf_observado.py  # valida o RF observado, as agregações e as figuras
 python3 teste_fwi.py           # valida o motor FWI (tabela de referência + xclim) e o FWI observado

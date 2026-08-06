@@ -78,6 +78,13 @@ ROTULOS_FWI = ["Muito baixo\n0–5", "Baixo\n5–12", "Moderado\n12–22",
                "Alto\n22–35", "Muito alto\n> 35"]
 
 
+def escala_contagem(vmax):
+    """Escala sequencial para os campos de frequência (dias ou %)."""
+    from matplotlib import colormaps
+    cmap = colormaps["YlOrRd"]
+    return cmap, Normalize(vmin=0.0, vmax=float(vmax) if vmax else 1.0)
+
+
 def escala_fwi():
     """Escala em classes para os campos do FWI (limiares absolutos)."""
     cmap = ListedColormap(CORES_FWI)
@@ -109,6 +116,8 @@ def le_campo(caminho, nome_var=None):
     with xr.open_dataset(caminho, decode_times=False) as ds:
         if nome_var and nome_var in ds.data_vars:
             nome = nome_var
+        elif "dias" in ds.data_vars:          # arquivo de frequência
+            nome = "dias"
         elif "FWI" in ds.data_vars:
             nome = "FWI"
         else:
@@ -127,6 +136,24 @@ def le_campo(caminho, nome_var=None):
 def rotulo_do_arquivo(caminho, atributos):
     """Título curto para o painel, a partir do nome do arquivo."""
     nome = os.path.basename(caminho)
+    m_op = re.search(r"\.(FREQ\d+(?:\.\d+)?|P\d+)\.", nome)
+    if m_op:
+        marca = m_op.group(1)
+        alvo = nome.split("." + marca + ".")[1].replace(".nc", "")
+        op = (f"Dias ≥ {marca[4:]}" if marca.startswith("FREQ")
+              else f"Percentil {marca[1:]}")
+        dias = atributos.get("dias_agregados")
+        if re.fullmatch(r"\d{6}", alvo):
+            quando = dt.datetime.strptime(alvo, "%Y%m")
+            texto = f"{op} — {quando:%m/%Y}"
+        elif "-" in alvo:
+            a, b = alvo.split("-")[:2]
+            texto = (f"{op} — {dt.datetime.strptime(a, '%Y%m%d'):%d/%m/%Y} a "
+                     f"{dt.datetime.strptime(b, '%Y%m%d'):%d/%m/%Y}")
+        else:
+            texto = f"{op} — {alvo}"
+        return texto + (f" ({dias} dias)" if dias else "")
+
     if ".MEDIA." in nome or ".MAXIMO." in nome:
         op = "Média" if ".MEDIA." in nome else "Máximo"
         alvo = nome.split(".MEDIA." if ".MEDIA." in nome
@@ -216,9 +243,16 @@ def main():
     if not caminhos:
         sys.exit("Nenhum arquivo NetCDF encontrado.")
 
-    usa_fwi = args.escala_fwi or all(
-        os.path.basename(c).upper().startswith("FWI.") for c in caminhos)
-    cmap, norm = escala_fwi() if usa_fwi else escala(discreta=args.classes)
+    # Campos de frequência (variáveis "dias"/"frequencia") têm escala
+    # própria — não são risco, são contagem.
+    def _e_frequencia(caminho):
+        import xarray as xr
+        with xr.open_dataset(caminho, decode_times=False) as ds:
+            return {"dias", "frequencia"} & set(ds.data_vars) != set()
+
+    usa_freq = all(_e_frequencia(c) for c in caminhos)
+    usa_fwi = (not usa_freq) and (args.escala_fwi or all(
+        os.path.basename(c).upper().startswith("FWI.") for c in caminhos))
 
     campos = []
     for caminho in caminhos:
@@ -226,13 +260,34 @@ def main():
         if not args.sem_mascara:
             dados = mascara_oceano(dados, lat, lon)
         rot = rotulo_do_arquivo(caminho, atributos)
-        if usa_fwi or args.var:
+        if usa_fwi or usa_freq or args.var:
             rot = f"{atributos.get('_variavel', 'FWI')} — {rot}"
         campos.append((caminho, dados, lat, lon, rot))
 
+    if usa_freq:
+        vmax = max(float(np.nanmax(c[1])) for c in campos
+                   if np.isfinite(c[1]).any())
+        cmap, norm = escala_contagem(vmax)
+        limiar_txt = ""
+        with __import__("xarray").open_dataset(caminhos[0]) as ds:
+            limiar_txt = ds.attrs.get("limiar", "")
+    elif usa_fwi:
+        cmap, norm = escala_fwi()
+    else:
+        cmap, norm = escala(discreta=args.classes)
+
     def barra(fig, eixos):
         mapa = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-        if usa_fwi:
+        if usa_freq:
+            cb = fig.colorbar(mapa, ax=eixos, orientation="horizontal",
+                              fraction=0.05, pad=0.10, aspect=40)
+            nome = campos[0][4].split(" — ")[0]
+            rotulo_cb = ("Dias acima do limiar" if nome == "dias"
+                         else "Frequência de dias acima do limiar (%)")
+            if limiar_txt:
+                rotulo_cb += f"  (limiar {limiar_txt})"
+            cb.set_label(rotulo_cb, fontsize=9, labelpad=6)
+        elif usa_fwi:
             marcas = [(LIMITES_FWI[i] + LIMITES_FWI[i + 1]) / 2
                       for i in range(len(CORES_FWI))]
             cb = fig.colorbar(mapa, ax=eixos, orientation="horizontal",

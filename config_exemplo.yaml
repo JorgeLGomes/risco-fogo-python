@@ -19,10 +19,20 @@ base: /p/projetos/grpeta/Team/jorge.gomes/risco-fogo-python
 # Onde estão os dados de entrada
 # ----------------------------------------------------------------------------
 caminhos:
-  # Precipitação observada diária (IMERG)
+  # Precipitação observada diária (IMERG) — fonte padrão
   imerg_dir: data/output/2.2/Precipitation-2_2
   imerg_subpastas: "{ano}/{mes}"                       # subpastas por data
   imerg_padrao: "INPE_FireRiskModel_2.2_Precipitation_{data}.nc"   # {data}=YYYYMMDD
+
+  # MSWEP — arquivos ORIGINAIS (globais 0,1°), como estão no disco do CPTEC
+  mswep_dir: /pesq/dados/sismom/SisMOM/sipec/mswep/daily
+  mswep_subpastas: "{ano}/{mes}"
+  mswep_padrao: "{data}.nc"                            # {data}=YYYYMMDD
+
+  # MSWEP já convertido ao padrão do pipeline (gerado pelo prepara_mswep.py)
+  mswep_conv_dir: data/output/2.2/MSWEP-2_2
+  mswep_conv_subpastas: "{ano}/{mes}"
+  mswep_conv_padrao: "INPE_FireRiskModel_2.2_Precipitation_MSWEP_{data}.nc"
 
   # Mapa de vegetação de 1 km ({ano_veg} é resolvido pela regra do modelo:
   # anos >= 2020 usam 2019)
@@ -38,6 +48,37 @@ caminhos:
 
   # Pasta de logs (um arquivo por previsão)
   log: log
+
+# ----------------------------------------------------------------------------
+# Precipitação OBSERVADA: qual banco alimenta os 120 dias de chuva
+# ----------------------------------------------------------------------------
+# Vale para os 119 dias observados da janela do RF previsto, para o RF
+# observado (rf_observado.py) e para o FWI observado (fwi_observado.py).
+#
+#   fonte: imerg   -> IMERG Early/Late/Final do GPM (padrão; baixado pelo
+#                     prepara_imerg.py). É o dado da operação do Queimadas.
+#   fonte: mswep   -> MSWEP (Multi-Source Weighted-Ensemble Precipitation),
+#                     já disponível no disco do CPTEC — não há download.
+#                     O produto ganha o sufixo _MSWEP, de modo que as duas
+#                     rodadas nunca se misturam (útil para comparar fontes).
+#
+#   modo: in_loco     -> lê os arquivos originais (globais 3600x1800),
+#                        recortando o domínio na leitura. Nada a preparar.
+#   modo: convertido  -> lê a cópia recortada gravada pelo prepara_mswep.py
+#                        (~2 MB/dia em vez de ~7 MB globais). Vale a pena em
+#                        rodada diária, que relê a janela de 120 dias.
+#
+#   variavel: auto -> descobre sozinha o nome da variável no arquivo (o
+#                     MSWEP costuma vir sem nome reconhecível — o `cdo
+#                     sinfo` mostra "unknown"). Informe o nome se houver
+#                     mais de uma variável candidata.
+#   dominio        -> recorte "latS,latN,lonW,lonE" aplicado na leitura in
+#                     loco (o mesmo domínio dos arquivos do IMERG).
+precipitacao:
+  fonte: imerg           # imerg | mswep
+  modo: in_loco          # in_loco | convertido  (só afeta o MSWEP)
+  variavel: auto
+  dominio: "-60.05,29.95,-114.95,-30.05"
 
 # ----------------------------------------------------------------------------
 # ERA5: horário das variáveis meteorológicas dos produtos OBSERVADOS
@@ -175,6 +216,10 @@ execucao:
   #   classe_veg: 4          -> classe usada com sem_vegetacao (padrão 4:
   #                             A = 2.4, PSE_max = 75)
   #
+  # Atalho para a fonte de precipitação observada (equivale a
+  # "precipitacao: fonte:" acima; a CLI --precipitacao prevalece):
+  # precipitacao: mswep
+
   # Rodada de referência (tudo ligado) — padrão:
   sem_vegetacao: false
   sem_topografia: false

@@ -281,6 +281,37 @@ git commit -m "Muda o base padrao para o diretorio do ian01 e melhora os preparo
 git push origin main
 ```
 
+Por último, a fonte de precipitação observada MSWEP:
+
+```powershell
+git add -A
+git commit -m "Adiciona o MSWEP como fonte alternativa de precipitacao observada
+
+- rf_config: nova secao 'precipitacao' (fonte imerg|mswep, modo in_loco|
+  convertido, variavel, dominio), caminhos mswep_* e mswep_conv_*, e as
+  funcoes caminho_precipitacao/variavel_precipitacao/recorte_precipitacao/
+  sufixo_precipitacao; atalho execucao: precipitacao: mswep
+- rf_core: le_precip_arquivo/le_grade_precip com deteccao automatica da
+  variavel (o MSWEP vem como 'unknown'), recorte do dominio aplicado na
+  leitura (isel preguicoso, a grade global 3600x1800 nunca entra inteira
+  na memoria) e reordenacao de arquivos com longitude 0..360;
+  ler_precipitacao e calcula_risco_fogo aceitam nome_var e recorte
+- prepara_mswep.py: converte os arquivos locais do MSWEP para o padrao do
+  pipeline (recorte, lat sul->norte, variavel prec), incremental, com
+  reserva automatica para o arquivo mensal (jan.nc, feb.nc, ...)
+- rf_observado/fwi_observado/rf_previsto: --precipitacao e
+  --modo-precipitacao; produtos ganham o sufixo _MSWEP, sem se misturar
+  com as rodadas de referencia com IMERG
+- rf_fontes: a parte observada da serie de 120 dias tambem le a fonte
+  configurada
+- teste_mswep.py: deteccao da variavel, recorte (inclusive lon 0..360),
+  conversao, arquivo mensal, config e ponta a ponta (RF observado in loco
+  == convertido; FWI observado com MSWEP)
+- config_mswep.yaml e config_exemplo.yaml; manual v2.6 com a secao 6.9"
+
+git push origin main
+```
+
 E no servidor (ian01): `git pull`.
 
 ## 6. Comandos úteis do dia a dia

@@ -4,9 +4,13 @@ rf_observado.py
 ===============
 
 **Risco de Fogo OBSERVADO**: calcula o RF de dias que já passaram usando
-apenas dados observados — a precipitação diária do IMERG (os 120 dias que
-antecedem e incluem cada dia analisado) e a temperatura/umidade relativa
-da reanálise ERA5 na hora da análise (padrão 18 UTC).
+apenas dados observados — a precipitação diária observada (os 120 dias
+que antecedem e incluem cada dia analisado) e a temperatura/umidade
+relativa da reanálise ERA5 na hora da análise (padrão 18 UTC).
+
+A precipitação vem do IMERG (padrão) ou do MSWEP (``--precipitacao
+mswep``, ou seção ``precipitacao`` do config.yaml); com MSWEP o produto
+ganha o sufixo _MSWEP e as duas rodadas nunca se misturam.
 
 É o complemento do rf_previsto.py: a mesma formulação do INPE
 FireRiskModel 2.2 (rb_max 0.9, fatores FU/FT/FLAT/FTOP), mas alimentada
@@ -14,8 +18,10 @@ por observações, permitindo reconstituir o RF dos últimos dias, semanas
 ou meses e comparar com as previsões.
 
 Pré-requisitos (bancos de dados locais):
-    python3 prepara_imerg.py --inicio ... --fim ...   # precipitação
+    python3 prepara_imerg.py --inicio ... --fim ...   # precipitação (IMERG)
     python3 prepara_era5.py  --inicio ... --fim ...   # T2m/UR2m (ERA5)
+    (com MSWEP não há download: os arquivos já estão no disco; o
+     prepara_mswep.py só converte uma cópia recortada, se quiser)
 
 Uso
 ---
@@ -71,16 +77,18 @@ def processa_dia(parametros):
             flog.flush()
 
         try:
-            log(f"RF OBSERVADO {data_analise} — IMERG + ERA5 "
+            fonte_prec = parametros.get("fonte_precip", "IMERG")
+            log(f"RF OBSERVADO {data_analise} — {fonte_prec} + ERA5 "
                 f"({dt.datetime.now():%Y-%m-%d %H:%M:%S})")
 
             # Precipitação: 120 dias observados terminando no dia analisado.
             lista_imerg = parametros["lista_imerg"]
             log("")
             log(f"Abrindo {len(lista_imerg)} arquivos de precipitação "
-                f"(IMERG).")
+                f"({parametros.get('descricao_precip', fonte_prec)}).")
             precip, lat_prec, lon_prec = rf_core.ler_precipitacao(
-                lista_imerg, parametros["nome_var_precip"])
+                lista_imerg, parametros["nome_var_precip"],
+                parametros.get("recorte_precip"))
 
             # Temperatura e umidade: ERA5 na hora da análise (uma hora
             # fixa, ou composta por faixas de longitude no modo solar).
@@ -116,7 +124,8 @@ def processa_dia(parametros):
                 arquivo_saida=arquivo_saida,
                 data_previsao=data_analise,
                 rb_maximo=parametros["rb_maximo"],
-                titulo=f"Risco de fogo observado (IMERG+ERA5) "
+                titulo=f"Risco de fogo observado "
+                       f"({parametros.get('fonte_precip', 'IMERG')}+ERA5) "
                        f"{data_analise}",
                 log=log,
                 usar_vegetacao=parametros["usar_vegetacao"],
@@ -256,9 +265,19 @@ def main():
     parser.add_argument("--hora-local", type=int, default=None,
                         help="Hora solar local no modo solar (padrão: "
                              "seção 'era5' do config).")
+    parser.add_argument("--precipitacao", default=None,
+                        choices=list(rf_config.FONTES_PRECIPITACAO),
+                        help="Fonte da precipitação observada: 'imerg' "
+                             "(padrão) ou 'mswep'. Padrão: seção "
+                             "'precipitacao' do config. Sufixo _MSWEP.")
+    parser.add_argument("--modo-precipitacao", default=None,
+                        choices=["in_loco", "convertido"],
+                        help="Leitura do MSWEP: 'in_loco' (arquivos "
+                             "originais globais, recorte na leitura) ou "
+                             "'convertido' (cópia do prepara_mswep.py).")
     parser.add_argument("--config", default=None,
                         help="Arquivo YAML/JSON de configuração (base, "
-                             "caminhos do IMERG/ERA5/vegetação etc.).")
+                             "caminhos do IMERG/MSWEP/ERA5/vegetação etc.).")
     parser.add_argument("--media", action="store_true",
                         help="Gera também o RF MÉDIO de todo o período "
                              "(RF.OBS.MEDIA.{ini}-{fim}.nc).")
@@ -268,6 +287,15 @@ def main():
     parser.add_argument("--maximo", action="store_true",
                         help="Nas agregações, usa o MÁXIMO em vez da média "
                              "(arquivos RF.OBS.MAXIMO.*).")
+    parser.add_argument("--frequencia", type=float, default=None,
+                        help="Gera também a FREQUÊNCIA de dias com valor >= "
+                             "LIMIAR (nº de dias e %% dos dias válidos) — "
+                             "ex.: --frequencia 0.7 (classes Alto/Crítico "
+                             "do RF). Arquivos RF.OBS.FREQ<limiar>.*")
+    parser.add_argument("--percentil", type=float, default=None,
+                        help="Gera também o PERCENTIL da distribuição dos "
+                             "dias (0–100) — ex.: --percentil 90. "
+                             "Arquivos RF.OBS.P<N>.*")
     parser.add_argument("--mergetime", action="store_true",
                         help="Gera também um único NetCDF com todos os dias "
                              "(RF.OBS.SERIE.{ini}-{fim}.nc).")
@@ -283,6 +311,18 @@ def main():
            else rf_config.padrao())
     base = (args.base or cfg["base"]).rstrip("/")
     caminhos = cfg["caminhos"]
+
+    # Fonte da precipitação observada: CLI > seção 'precipitacao' > padrão.
+    cfg_precip = dict(cfg.get("precipitacao")
+                      or rf_config.PRECIPITACAO_PADRAO)
+    if args.precipitacao:
+        cfg_precip["fonte"] = args.precipitacao
+    if args.modo_precipitacao:
+        cfg_precip["modo"] = args.modo_precipitacao
+    rf_config.valida_precipitacao(cfg_precip)
+    nome_var_precip = rf_config.variavel_precipitacao(cfg_precip)
+    recorte_precip = rf_config.recorte_precipitacao(cfg_precip)
+
     # Horário do ERA5: CLI > seção 'era5' do config > padrão.
     cfg_era5 = dict(era5_tempo.normaliza(cfg.get("era5")))
     if args.horario:
@@ -304,7 +344,7 @@ def main():
     dias_analise = [inicio + dt.timedelta(days=i)
                     for i in range((fim - inicio).days + 1)]
 
-    produto = args.produto
+    produto = args.produto + rf_config.sufixo_precipitacao(cfg_precip)
     if args.sem_vegetacao:
         produto += "_SEMVEG"
     if args.sem_topografia:
@@ -328,16 +368,17 @@ def main():
     horas_do_dia = era5_tempo.horas_para_grade(cfg_era5, [-45.0])
     if modo_solar:
         for dia in dias_analise:
-            caminho = rf_config.caminho_imerg(base, caminhos, dia)
+            caminho = rf_config.caminho_precipitacao(
+                base, caminhos, dia, cfg_precip)
             if os.path.exists(caminho):
-                import xarray as xr
-                with xr.open_dataset(caminho, decode_times=False) as ds:
-                    lon_banco = np.asarray(ds["lon"].values, dtype=np.float64)
+                _, lon_banco = rf_core.le_grade_precip(caminho,
+                                                       recorte_precip)
                 horas_do_dia = era5_tempo.horas_para_grade(cfg_era5, lon_banco)
                 break
 
     print(f"RF OBSERVADO: {inicio:%Y%m%d} a {fim:%Y%m%d} "
           f"({len(dias_analise)} dia(s))")
+    print(f"precip.: >>{rf_config.descricao_precipitacao(cfg_precip)}")
     print(f"horario: >>{era5_tempo.descricao(cfg_era5)}"
           + (f" — horas UTC {', '.join(f'{h:02d}' for h in horas_do_dia)}"
              if modo_solar else ""))
@@ -360,7 +401,8 @@ def main():
         lista_imerg = []
         for k in range(119, -1, -1):                 # ordem cronológica
             d = dia - dt.timedelta(days=k)
-            caminho = rf_config.caminho_imerg(base, caminhos, d)
+            caminho = rf_config.caminho_precipitacao(
+                base, caminhos, d, cfg_precip)
             if os.path.exists(caminho):
                 lista_imerg.append(caminho)
             else:
@@ -383,7 +425,10 @@ def main():
         trabalhos.append({
             "data_analise": data_analise,
             "lista_imerg": lista_imerg,
-            "nome_var_precip": "prec",
+            "nome_var_precip": nome_var_precip,
+            "recorte_precip": recorte_precip,
+            "fonte_precip": cfg_precip["fonte"].upper(),
+            "descricao_precip": rf_config.descricao_precipitacao(cfg_precip),
             "arquivos_era5": arquivos_era5,
             "hora_local": cfg_era5["hora_local"],
             "descricao_hora": era5_tempo.descricao(cfg_era5),
@@ -409,12 +454,15 @@ def main():
             exemplo = os.path.basename(faltas[0])
             print(f"  {data_analise}: faltam {len(faltas)} arquivo(s) "
                   f"(ex.: {exemplo})", file=sys.stderr)
-        print("  -> rode prepara_imerg.py / prepara_era5.py para o "
-              "período.", file=sys.stderr)
+        preparador = ("prepara_mswep.py" if cfg_precip["fonte"] == "mswep"
+                      else "prepara_imerg.py")
+        print(f"  -> rode {preparador} / prepara_era5.py para o "
+              f"período.", file=sys.stderr)
 
     if args.simular:
         for t in trabalhos:
-            print(f"  {t['data_analise']}: {len(t['lista_imerg'])} IMERG + "
+            print(f"  {t['data_analise']}: {len(t['lista_imerg'])} "
+                  f"{t['fonte_precip']} + "
                   f"{len(t['arquivos_era5'])} ERA5 "
                   f"({t['descricao_hora']})")
         print(f"(--simular: nada foi calculado; {len(trabalhos)} dia(s) "
@@ -481,31 +529,31 @@ def agrega_periodo(args, dias_analise, dir_output_netcdf, hora, inicio, fim):
               file=sys.stderr)
         return
 
-    operacao = "maximo" if args.maximo else "media"
-    rotulo = operacao.upper()
+    for rotulo, operacao, extra in rf_core.operacoes_pedidas(args):
+        if args.media_mensal:
+            for (ano, mes), dias_mes in _por_mes(disponiveis):
+                saida = os.path.join(
+                    dir_output_netcdf,
+                    f"RF.OBS.{rotulo}.{ano:04d}{mes:02d}.nc")
+                _, usados = agrega(
+                    [caminho_do_dia(d) for d in dias_mes], saida, operacao,
+                    titulo=(f"Risco de fogo observado — {rotulo} de "
+                            f"{ano:04d}-{mes:02d} ({len(dias_mes)} dias)"),
+                    data_ref=dias_mes[-1].replace(hour=hora), **extra)
+                print(f"{rotulo} {ano:04d}-{mes:02d} ({usados} dias): "
+                      f"{saida}")
 
-    if args.media_mensal:
-        for (ano, mes), dias_mes in _por_mes(disponiveis):
-            saida = os.path.join(dir_output_netcdf,
-                                 f"RF.OBS.{rotulo}.{ano:04d}{mes:02d}.nc")
+        if args.media:
+            saida = os.path.join(
+                dir_output_netcdf,
+                f"RF.OBS.{rotulo}.{inicio:%Y%m%d}-{fim:%Y%m%d}.nc")
             _, usados = agrega(
-                [caminho_do_dia(d) for d in dias_mes], saida, operacao,
-                titulo=(f"Risco de fogo observado — {operacao} de "
-                        f"{ano:04d}-{mes:02d} ({len(dias_mes)} dias)"),
-                data_ref=dias_mes[-1].replace(hour=hora))
-            print(f"{rotulo} {ano:04d}-{mes:02d} ({usados} dias): {saida}")
-
-    if args.media:
-        saida = os.path.join(
-            dir_output_netcdf,
-            f"RF.OBS.{rotulo}.{inicio:%Y%m%d}-{fim:%Y%m%d}.nc")
-        _, usados = agrega(
-            [caminho_do_dia(d) for d in disponiveis], saida, operacao,
-            titulo=(f"Risco de fogo observado — {operacao} de "
-                    f"{inicio:%Y%m%d} a {fim:%Y%m%d} ({len(disponiveis)} "
-                    f"dias)"),
-            data_ref=fim.replace(hour=hora))
-        print(f"{rotulo} do período ({usados} dias): {saida}")
+                [caminho_do_dia(d) for d in disponiveis], saida, operacao,
+                titulo=(f"Risco de fogo observado — {rotulo} de "
+                        f"{inicio:%Y%m%d} a {fim:%Y%m%d} "
+                        f"({len(disponiveis)} dias)"),
+                data_ref=fim.replace(hour=hora), **extra)
+            print(f"{rotulo} do período ({usados} dias): {saida}")
 
     if args.mergetime:
         saida = os.path.join(

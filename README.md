@@ -16,6 +16,7 @@ rf_config.py                  # Configuração YAML dos dados de entrada (--conf
 era5_tempo.py                 # Horário do ERA5: hora fixa UTC ou hora solar local (fusos)
 prepara_gfs.py                # Download do GFS: prec, T2m/RH2m e vento U10m/V10m (fast download .idx)
 prepara_imerg.py              # Download/conversão do IMERG Early Daily V07 (GES DISC, Earthdata)
+prepara_mswep.py              # Conversão do MSWEP local (fonte alternativa de precipitação observada)
 prepara_era5.py               # Download/conversão da ERA5: t2m, ur2m (de t+td), u10, v10 (CDS/Copernicus)
 rf_observado.py               # RF OBSERVADO (IMERG + ERA5): dias/semanas/meses + médias do período
 rf_figura.py                  # Figuras PNG na paleta oficial (SLD do GeoServer)
@@ -25,8 +26,10 @@ teste_rf.py                   # Teste de validação (dados sintéticos + refer�
 teste_rf_previsto.py          # Teste de ponta a ponta do script genérico
 teste_rf_multifonte.py        # Teste do modo multifonte (Eta 13m, BESM 12h, fonte via JSON)
 teste_prepara_gfs.py          # Teste do preparo do GFS (idx, baldes 6h/12h)
+teste_mswep.py                # Teste da fonte MSWEP (detecção da variável, recorte, conversão)
 config_exemplo.yaml           # Modelo comentado do arquivo de configuração
 config_besm.yaml              # Rodada sazonal do BESM: RF médio mensal de +1 a +13 meses
+config_mswep.yaml             # Rodada observada usando o MSWEP como precipitação
 ativa_riscofogo.sh            # Ativação do ambiente no cluster (use com source)
 requirements.txt              # Dependências Python
 docs/                         # Relatório de conversão e manual do usuário (md, docx, pdf)
@@ -87,6 +90,14 @@ python3 rf_figura.py data/output/2.2/RF_OBS/netcdf/RF.OBS.MEDIA.202607.nc
 python3 prepara_era5.py  --config config.yaml --dias 30    # baixa as horas do config
 python3 rf_observado.py  --config config.yaml --dias 30    # produto ganha sufixo _SOLAR
 
+# Precipitação observada do MSWEP em vez do IMERG (manual 6.9) — sem download:
+# lê os arquivos globais do disco do CPTEC recortando o domínio na leitura
+python3 rf_observado.py  --config config.yaml --dias 7 --precipitacao mswep
+python3 fwi_observado.py --config config.yaml --dias 30 --precipitacao mswep
+# Opcional: converter uma cópia recortada (mais rápida na rodada diária)
+python3 prepara_mswep.py --config config.yaml
+python3 rf_observado.py  --config config_mswep.yaml --dias 7
+
 # Sensibilidade da escala da UR no Fator de Umidade (ver manual 6.7)
 python3 rf_observado.py --de 20260701 --ate 20260731 --correcao-ur percentual
 
@@ -104,6 +115,7 @@ python3 teste_rf_previsto.py  # script genérico de ponta a ponta
 python3 teste_rf_multifonte.py # modo multifonte (Eta/BESM)
 python3 teste_fwi.py          # motor FWI (tabela de referência + xclim) e FWI observado
 python3 teste_era5_horario.py # horário da ERA5 (fixo/solar) e escala da UR
+python3 teste_mswep.py        # fonte MSWEP (recorte, conversão, RF/FWI de ponta a ponta)
 ```
 
 Documentação completa em `docs/manual_usuario.md` (uso e operação),

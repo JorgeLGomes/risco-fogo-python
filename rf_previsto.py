@@ -247,6 +247,8 @@ def processa_previsao(parametros):
                     arquivo_saida=parametros["arquivo_saida"],
                     data_previsao=data_previsao,
                     rb_maximo=parametros["rb_maximo"],
+                    nome_var_precip=parametros.get("nome_var_precip", "prec"),
+                    recorte_precip=parametros.get("recorte_precip"),
                     log=log,
                     usar_vegetacao=parametros.get("usar_vegetacao", True),
                     usar_topografia=parametros.get("usar_topografia", True),
@@ -263,9 +265,12 @@ def processa_previsao(parametros):
                     rf_fontes.carrega_fontes_json(parametros["config_fontes"])
                 fonte = rf_fontes.FONTES[parametros["fonte"]]
 
+                cfg_precip = parametros.get("precipitacao")
+
                 def caminho_imerg_fn(dia):
-                    return rf_config.caminho_imerg(
-                        parametros["base"], parametros["caminhos"], dia)
+                    return rf_config.caminho_precipitacao(
+                        parametros["base"], parametros["caminhos"], dia,
+                        cfg_precip)
 
                 log("")
                 log(f"Montando a série diária de precipitação "
@@ -279,6 +284,8 @@ def processa_previsao(parametros):
                     n_dias=rf_core.ND_ESPERADO,
                     log=log,
                     caminho_imerg_fn=caminho_imerg_fn,
+                    var_imerg=rf_config.variavel_precipitacao(cfg_precip),
+                    recorte_imerg=rf_config.recorte_precipitacao(cfg_precip),
                 )
 
                 log("")
@@ -427,9 +434,26 @@ def main():
     parser.add_argument("--maximo", action="store_true",
                         help="Nas agregações, usa o MÁXIMO em vez da média "
                              "(arquivos RF.PREV.MAXIMO.*).")
+    parser.add_argument("--frequencia", type=float, default=None,
+                        help="Gera também a FREQUÊNCIA de previsões com "
+                             "valor >= LIMIAR (nº e %%) — ex.: "
+                             "--frequencia 0.7. Arquivos "
+                             "RF.PREV.FREQ<limiar>.*")
+    parser.add_argument("--percentil", type=float, default=None,
+                        help="Gera também o PERCENTIL da distribuição das "
+                             "previsões (0–100). Arquivos RF.PREV.P<N>.*")
     parser.add_argument("--so-agrega", action="store_true",
                         help="Não calcula nada: apenas agrega os arquivos "
                              "de previsão já existentes da rodada.")
+    parser.add_argument("--precipitacao", default=None,
+                        choices=list(rf_config.FONTES_PRECIPITACAO),
+                        help="Fonte da precipitação OBSERVADA da janela de "
+                             "120 dias: 'imerg' (padrão) ou 'mswep'. "
+                             "Padrão: seção 'precipitacao' do config.")
+    parser.add_argument("--modo-precipitacao", default=None,
+                        choices=["in_loco", "convertido"],
+                        help="Leitura do MSWEP: 'in_loco' (originais "
+                             "globais) ou 'convertido' (prepara_mswep.py).")
     parser.add_argument("--config", default=None,
                         help="Arquivo de configuração YAML (ou JSON) dos "
                              "dados de entrada: base, caminhos (IMERG, "
@@ -469,6 +493,19 @@ def main():
 
     base = args.base.rstrip("/")
     caminhos = cfg["caminhos"]
+
+    # Fonte da precipitação OBSERVADA (a parte da janela de 120 dias
+    # anterior à rodada): CLI > seção 'precipitacao' > padrão (IMERG).
+    cfg_precip = dict(cfg.get("precipitacao")
+                      or rf_config.PRECIPITACAO_PADRAO)
+    if args.precipitacao:
+        cfg_precip["fonte"] = args.precipitacao
+    if args.modo_precipitacao:
+        cfg_precip["modo"] = args.modo_precipitacao
+    rf_config.valida_precipitacao(cfg_precip)
+    nome_var_precip = rf_config.variavel_precipitacao(cfg_precip)
+    recorte_precip = rf_config.recorte_precipitacao(cfg_precip)
+
     dirin_imerg = rf_config.resolve(base, caminhos["imerg_dir"])
     dir_log = rf_config.resolve(base, caminhos["log"])
     arq_topografia = rf_config.resolve(base, caminhos["topografia"])
@@ -518,6 +555,7 @@ def main():
         produto += "_SEMTOPO"
     if args.correcao_ur != "ncl":
         produto += "_UR" + args.correcao_ur.upper()[:3]
+    produto += rf_config.sufixo_precipitacao(cfg_precip)
 
     dirin_gfs = f"{base}/data/output/2.2/GFS/netcdf/{data_modelo}"
     if fonte is not None:
@@ -540,6 +578,7 @@ def main():
     print("fonte: >>>>" + (fonte.nome if fonte else "gfs (composição legada)"))
     print("previsoes: >" + ", ".join(p.strftime("%Y%m%d%H")
                                      for p in previsoes))
+    print("precip.: >>" + rf_config.descricao_precipitacao(cfg_precip))
     print("rb_max: >>>" + str(args.rb_max))
     print("produto: >>" + produto)
 
@@ -552,7 +591,8 @@ def main():
         faltantes = []
         data_corrente = data_inicial_dt
         while data_corrente < hoje:
-            caminho = rf_config.caminho_imerg(base, caminhos, data_corrente)
+            caminho = rf_config.caminho_precipitacao(
+                base, caminhos, data_corrente, cfg_precip)
             if os.path.exists(caminho):
                 lista_imerg.append(caminho)
             else:
@@ -562,7 +602,8 @@ def main():
         if faltantes:
             with open("log.falta.arquivos.prev.prec.txt", "a") as flog:
                 flog.write("\n".join(faltantes) + "\n")
-            print(f"Aviso: {len(faltantes)} arquivo(s) IMERG faltando "
+            print(f"Aviso: {len(faltantes)} arquivo(s) de precipitação "
+                  f"observada ({cfg_precip['fonte'].upper()}) faltando "
                   f"(ver log.falta.arquivos.prev.prec.txt)", file=sys.stderr)
 
     # -----------------------------------------------------------------------
@@ -590,6 +631,9 @@ def main():
             "config": args.config,
             "dirin_fonte": dirin_fonte,
             "dirin_imerg": dirin_imerg,
+            "precipitacao": cfg_precip,
+            "nome_var_precip": nome_var_precip,
+            "recorte_precip": recorte_precip,
             "base": base,
             "caminhos": caminhos,
         }
@@ -677,33 +721,33 @@ def agrega_previsoes(args, previsoes, dir_output_netcdf):
               file=sys.stderr)
         return
 
-    operacao = "maximo" if args.maximo else "media"
-    rotulo = operacao.upper()
+    for rotulo, operacao, extra in rf_core.operacoes_pedidas(args):
+        if args.media_mensal:
+            for (ano, mes), do_mes in rf_core.agrupa_por_mes(disponiveis):
+                saida = os.path.join(
+                    dir_output_netcdf,
+                    f"RF.PREV.{rotulo}.{ano:04d}{mes:02d}.nc")
+                _, usados = rf_core.agrega_campos(
+                    [caminho(p) for p in do_mes], saida, operacao,
+                    titulo=(f"Risco de fogo previsto — {rotulo} de "
+                            f"{ano:04d}-{mes:02d} ({len(do_mes)} previsões)"),
+                    data_ref=do_mes[-1], **extra)
+                print(f"{rotulo} {ano:04d}-{mes:02d} ({usados} previsões): "
+                      f"{saida}")
 
-    if args.media_mensal:
-        for (ano, mes), do_mes in rf_core.agrupa_por_mes(disponiveis):
-            saida = os.path.join(dir_output_netcdf,
-                                 f"RF.PREV.{rotulo}.{ano:04d}{mes:02d}.nc")
+        if args.media:
+            saida = os.path.join(
+                dir_output_netcdf,
+                f"RF.PREV.{rotulo}.{disponiveis[0]:%Y%m%d}-"
+                f"{disponiveis[-1]:%Y%m%d}.nc")
             _, usados = rf_core.agrega_campos(
-                [caminho(p) for p in do_mes], saida, operacao,
-                titulo=(f"Risco de fogo previsto — {operacao} de "
-                        f"{ano:04d}-{mes:02d} ({len(do_mes)} previsões)"),
-                data_ref=do_mes[-1])
-            print(f"{rotulo} {ano:04d}-{mes:02d} ({usados} previsões): "
-                  f"{saida}")
-
-    if args.media:
-        saida = os.path.join(
-            dir_output_netcdf,
-            f"RF.PREV.{rotulo}.{disponiveis[0]:%Y%m%d}-"
-            f"{disponiveis[-1]:%Y%m%d}.nc")
-        _, usados = rf_core.agrega_campos(
-            [caminho(p) for p in disponiveis], saida, operacao,
-            titulo=(f"Risco de fogo previsto — {operacao} de "
-                    f"{disponiveis[0]:%Y%m%d} a {disponiveis[-1]:%Y%m%d} "
-                    f"({len(disponiveis)} previsões)"),
-            data_ref=disponiveis[-1])
-        print(f"{rotulo} da rodada ({usados} previsões): {saida}")
+                [caminho(p) for p in disponiveis], saida, operacao,
+                titulo=(f"Risco de fogo previsto — {rotulo} de "
+                        f"{disponiveis[0]:%Y%m%d} a "
+                        f"{disponiveis[-1]:%Y%m%d} "
+                        f"({len(disponiveis)} previsões)"),
+                data_ref=disponiveis[-1], **extra)
+            print(f"{rotulo} da rodada ({usados} previsões): {saida}")
 
 
 if __name__ == "__main__":

@@ -295,7 +295,7 @@ man.push(
     "Manual do Usuário",
     "Risco de Fogo Previsto em Python — INPE_FireRiskModel v2.2",
     [
-      "Versão 2.4 · 5 de agosto de 2026",
+      "Versão 2.6 · 6 de agosto de 2026",
       "Substitui: rf_previsto_1-5dias_2023.sh e rf_previsto_1-2_semanas_2024.sh (bash + NCL)",
       "Programa Queimadas — http://www.inpe.br/queimadas/",
     ],
@@ -531,12 +531,15 @@ man.push(p("Semântica: topografia desligada zera a correção (FTOP≡1) e disp
 
 man.push(h2("5.7 Risco médio: agregações da rodada (--media-mensal / --media)"));
 man.push(p("Cada horizonte gera o seu RF.PREV.{data}{hora}.nc. Para obter o risco médio — típico das rodadas sazonais (Eta/BESM), em que interessa o mês e não o dia — o rf_previsto.py agrega os campos ao final:"));
-man.push(tabela(["Opção", "Saída"], [
-  ["--media-mensal", "RF.PREV.MEDIA.AAAAMM.nc — uma média por mês-calendário coberto pelas previsões"],
-  ["--media", "RF.PREV.MEDIA.{ini}-{fim}.nc — média de toda a rodada"],
-  ["--maximo", "usa o máximo em vez da média (RF.PREV.MAXIMO.*)"],
-  ["--so-agrega", "não recalcula nada: agrega os arquivos já existentes da rodada"],
-], [28, 72]));
+man.push(tabela(["Opção", "Papel", "Saída"], [
+  ["--media-mensal", "agrupamento", "uma agregação por mês-calendário coberto pelas previsões"],
+  ["--media", "agrupamento", "uma agregação de toda a rodada"],
+  ["--maximo", "operação", "usa o máximo em vez da média (RF.PREV.MAXIMO.*)"],
+  ["--frequencia L", "operação adicional", "nº de previsões com valor >= L e o percentual delas (RF.PREV.FREQ<L>.*, variáveis dias e frequencia)"],
+  ["--percentil N", "operação adicional", "percentil N da distribuição (RF.PREV.P<N>.*)"],
+  ["--so-agrega", "—", "não recalcula nada: agrega os arquivos já existentes da rodada"],
+], [22, 20, 58]));
+man.push(p("As opções de agrupamento dizem sobre o quê agregar (o mês ou a rodada inteira) e as de operação dizem como. --frequencia e --percentil são acumulativas: pedidas junto com --media-mensal, geram, para cada mês, a média e os campos de frequência e percentil."));
 man.push(p("Os campos são agrupados pela data válida de cada previsão, e as médias ignoram valores ausentes ponto a ponto (o número de campos usados vai no atributo global dias_agregados). As mesmas chaves existem no YAML (media_mensal, media, maximo)."));
 man.push(p([{ t: "Rodada sazonal do BESM (1 a 13 meses). ", b: true }, { t: "O BESM traz previsão diária por ~13 meses (396 dias), então há duas formas de produzir \"um valor por mês\":" }]));
 man.push(...codigo([
@@ -652,9 +655,11 @@ man.push(tabela(["Opção", "Saída"], [
   ["--media", "RF.OBS.MEDIA.{ini}-{fim}.nc — média de todo o período"],
   ["--media-mensal", "RF.OBS.MEDIA.AAAAMM.nc — uma média por mês-calendário do período"],
   ["--maximo", "usa o máximo em vez da média (arquivos RF.OBS.MAXIMO.*)"],
+  ["--frequencia L", "RF.OBS.FREQ<L>.* — nº de dias com RF >= L (variável dias) e o percentual dos dias válidos (variável frequencia)"],
+  ["--percentil N", "RF.OBS.P<N>.* — percentil N da distribuição dos dias"],
   ["--mergetime", "RF.OBS.SERIE.{ini}-{fim}.nc — todos os dias num só arquivo, com eixo de tempo"],
   ["--so-agrega", "não recalcula nada: agrega os diários já existentes no período"],
-], [28, 72]));
+], [24, 76]));
 man.push(p("As médias ignoram valores ausentes ponto a ponto (a contagem efetiva de dias usados fica no atributo global dias_agregados), e os arquivos saem no mesmo formato dos diários — podem ser abertos no QGIS/GeoServer ou passados ao rf_figura.py."));
 man.push(...codigo([
   "# Julho de 2026: 31 mapas diarios + a media do mes",
@@ -715,6 +720,62 @@ man.push(...codigo([
   "python3 rf_previsto.py  --horizontes 3d --correcao-ur percentual",
 ]));
 man.push(p([{ t: "Recomendação: ", b: true }, { t: "qualquer valor diferente de ncl acrescenta sufixo ao produto (_URDEC, _URPER) e registra a escolha no atributo global escala_ur_no_FU, para nunca se misturar com a rodada de referência. Trate como análise de sensibilidade e valide com o autor do modelo antes de qualquer mudança na operação." }]));
+
+man.push(h2("6.8 Qual métrica usar no produto mensal"));
+man.push(p("A média dos dias é a leitura mais simples, mas não é a única — e para risco de fogo raramente é suficiente sozinha. A distribuição do RF é assimétrica e o impacto vem da cauda: um mês com 25 dias tranquilos e 5 críticos pode ter a mesma média de um mês com 30 dias medianos, com comportamento do fogo completamente diferente."));
+man.push(tabela(["Métrica", "Quando usar"], [
+  ["Média (--media, --media-mensal)", "condição típica do mês; bom para mapa climatológico e comparação entre meses"],
+  ["Frequência (--frequencia 0.7)", "leitura operacional direta — \"neste mês, 12 dias de risco Alto ou Crítico\"; é também a forma que vira probabilidade quando aplicada aos membros de um ensemble em vez dos dias"],
+  ["Percentil (--percentil 90)", "pega a cauda sem depender de um único dia; base natural para expressar o índice em percentis da climatologia local"],
+  ["Máximo (--maximo)", "diagnóstico apenas — um único dia com erro de modelo domina o campo"],
+], [32, 68]));
+man.push(...codigo([
+  "# Julho de 2026: media, dias com RF >= 0,7 e percentil 90 do mes",
+  "python3 rf_observado.py --de 20260701 --ate 20260731 --media-mensal \\",
+  "    --frequencia 0.7 --percentil 90",
+]));
+man.push(p([{ t: "No FWI a resposta é canônica: ", b: true }, { t: "o índice não deve ser promediado — a relação dele com a dificuldade de controle não é linear. Van Wagner criou o DSR (Daily Severity Rating) justamente para poder ser promediado, e o produto mensal padrão do sistema é o MSR (Monthly Severity Rating) = média do DSR:" }]));
+man.push(...codigo([
+  "# MSR: produto mensal recomendado do sistema canadense",
+  "python3 fwi_observado.py --de 20260701 --ate 20260731 --media-mensal \\",
+  "    --var-agrega DSR",
+  "",
+  "# Dias de perigo alto (FWI >= 22) e percentil 90 do mes",
+  "python3 fwi_observado.py --de 20260701 --ate 20260731 --media-mensal \\",
+  "    --frequencia 22 --percentil 90",
+]));
+man.push(p("Detalhes de implementação: valores ausentes são ignorados ponto a ponto (a frequência é sempre relativa aos dias válidos daquele ponto, e o número de dias entra no atributo dias_agregados); o percentil é calculado por blocos de latitude, para não carregar a série inteira na memória na grade de 1 km. O rf_figura.py reconhece os arquivos de frequência e usa uma escala sequencial de contagem em vez da paleta de risco."));
+
+man.push(h2("6.9 Fonte da precipitação observada: IMERG ou MSWEP (prepara_mswep.py)"));
+man.push(p("A precipitação observada alimenta os 119 dias da janela do RF previsto, o RF observado e o FWI observado. Por padrão ela vem do IMERG, baixado pelo prepara_imerg.py. Como alternativa, o pipeline lê o MSWEP (Multi-Source Weighted-Ensemble Precipitation), que já está no disco do CPTEC e portanto dispensa download:"));
+man.push(...codigo([
+  "/pesq/dados/sismom/SisMOM/sipec/mswep/daily/{ano}/{mes}/{AAAAMMDD}.nc",
+]));
+man.push(p("Os arquivos originais são globais de 0,1° (3600 x 1800), com latitude de norte para sul, longitude -179,95..179,95 e a variável sem nome reconhecível (o cdo sinfo mostra \"unknown\"). O pipeline resolve os três pontos sozinho: detecta a variável, inverte a latitude para sul->norte e recorta o domínio na leitura, de modo que a grade global nunca é carregada inteira na memória."));
+man.push(p("A escolha é feita no config.yaml (ou na linha de comando, que prevalece):"));
+man.push(...codigo([
+  "precipitacao:",
+  "  fonte: mswep           # imerg (padrao) | mswep",
+  "  modo: in_loco          # in_loco (arquivos originais) | convertido",
+  "  variavel: auto         # nome da variavel no arquivo (auto detecta)",
+  "  dominio: \"-60.05,29.95,-114.95,-30.05\"   # recorte da leitura in loco",
+  "",
+  "python3 rf_observado.py  --config config.yaml --dias 7  --precipitacao mswep",
+  "python3 fwi_observado.py --config config.yaml --dias 30 --precipitacao mswep",
+  "python3 rf_previsto.py   --config config.yaml --horizontes 3d --precipitacao mswep",
+]));
+man.push(p("Os produtos ganham o sufixo _MSWEP (RF_OBS_MSWEP, FWI_OBS_MSWEP, RF_PREV_GFS_MSWEP...), de modo que uma rodada com MSWEP nunca sobrescreve a rodada de referência com IMERG — as duas podem ser comparadas ponto a ponto."));
+man.push(p([{ t: "Converter é opcional. ", b: true }, { t: "No modo in_loco (padrão) nada precisa ser preparado. O prepara_mswep.py grava uma cópia já recortada no padrão do pipeline (~2 MB/dia em vez de ~7 MB globais), o que compensa quando a mesma janela de 120 dias é relida todo dia, quando o disco do MSWEP é lento ou indisponível na hora da rodada, ou quando se quer congelar uma versão do banco para reprocessamento:" }]));
+man.push(...codigo([
+  "# Converte a janela de 119 dias que antecede hoje",
+  "python3 prepara_mswep.py --config config.yaml",
+  "",
+  "# Periodo explicito, e conferencia sem gravar",
+  "python3 prepara_mswep.py --config config.yaml --inicio 20230101 --fim 20230131",
+  "python3 prepara_mswep.py --config config.yaml --simular",
+]));
+man.push(p("Depois, basta trocar modo: in_loco por modo: convertido (ou usar --modo-precipitacao convertido). O script é incremental — pula os dias já convertidos, --sobrescrever regrava — e, se o arquivo diário não existir, tenta automaticamente o arquivo mensal da mesma pasta (jan.nc, feb.nc, ...), extraindo o dia pedido pelo eixo de tempo. As duas formas de leitura foram verificadas ponto a ponto: teste_mswep.py confirma que o RF observado sai idêntico in loco e convertido."));
+man.push(p([{ t: "Qual usar? ", b: true }, { t: "O IMERG é o dado da operação do Queimadas e tem latência de ~4 h, o que o torna obrigatório na rodada diária. O MSWEP combina satélite, estações e reanálise, costuma representar melhor a chuva sobre áreas com rede de superfície densa e cobre desde 1979 — sendo mais adequado a reconstruções históricas, calibração e comparação de sensibilidade da precipitação, que é a variável de maior peso no RF (os 120 acumulados diários). Como as duas rodadas escrevem em produtos separados, a comparação é direta." }]));
 
 man.push(h1("7. FWI — Canadian Fire Weather Index System"));
 man.push(p("Além do RF do INPE, o pacote traz o FWI canadense completo, o índice único proposto na metodologia multi-horizonte. Os dois convivem: consomem os mesmos arquivos de entrada e escrevem no mesmo padrão de saída, o que permite compará-los ponto a ponto."));

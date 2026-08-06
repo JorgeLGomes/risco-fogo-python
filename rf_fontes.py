@@ -363,9 +363,17 @@ def _caminho_imerg_padrao(dirin_imerg, dia):
         f"INPE_FireRiskModel_2.2_Precipitation_{ymd}.nc")
 
 
+def _le_campo_observado(caminho, nome_var="prec", recorte=None):
+    """Campo diário de precipitação OBSERVADA (IMERG no padrão do
+    pipeline, ou MSWEP original global lido com recorte)."""
+    dados, lat, lon = rf_core.le_precip_arquivo(caminho, nome_var, recorte)
+    return np.asarray(dados[0], dtype=np.float32), lat, lon
+
+
 def serie_precipitacao(fonte, dirin_fonte, dirin_imerg, modelo,
                        data_previsao, n_dias=120, log=print,
-                       caminho_imerg_fn=None):
+                       caminho_imerg_fn=None, var_imerg="prec",
+                       recorte_imerg=None):
     """Monta a série de ``n_dias`` acumulados diários de precipitação que
     antecedem (e incluem) a data prevista, em ordem cronológica crescente.
 
@@ -400,7 +408,8 @@ def serie_precipitacao(fonte, dirin_fonte, dirin_imerg, modelo,
                 faltantes.append(arq)
                 dia += dt.timedelta(days=1)
                 continue
-            campo, lat, lon = _le_campo(arq, "prec")
+            campo, lat, lon = _le_campo_observado(arq, var_imerg,
+                                                  recorte_imerg)
             if lat_ref is None:
                 lat_ref, lon_ref = lat, lon
             campos.append(_regrade_se_preciso(campo, lat, lon,
@@ -430,7 +439,8 @@ def serie_precipitacao(fonte, dirin_fonte, dirin_imerg, modelo,
                 # da série (persistência de 24-48 h).
                 arq_imerg = caminho_imerg_fn(dia)
                 if os.path.exists(arq_imerg):
-                    campo, lat, lon = _le_campo(arq_imerg, "prec")
+                    campo, lat, lon = _le_campo_observado(
+                        arq_imerg, var_imerg, recorte_imerg)
                     campos.append(_regrade_se_preciso(campo, lat, lon,
                                                       lat_ref, lon_ref))
                     log(f"Aviso: dia {dia:%Y-%m-%d} sem previsão na fonte; "

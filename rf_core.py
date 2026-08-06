@@ -133,7 +133,146 @@ def interp_bilinear(dados, lat_orig, lon_orig, lat_novo, lon_novo):
 # Leitura dos dados de entrada
 # ---------------------------------------------------------------------------
 
-def ler_precipitacao(lista_arquivos, nome_var="prec"):
+# Nomes usuais da variável de precipitação, na ordem de preferência da
+# detecção automática (o MSWEP às vezes traz a variável sem long_name, e
+# o nome muda entre versões: precipitation, precip, pr...).
+NOMES_PRECIP = ("prec", "precipitation", "precipitationCal", "precip",
+                "precipitationUncal", "pr", "tp", "rr")
+
+# Nomes usuais dos eixos horizontais.
+NOMES_LAT = ("lat", "latitude", "y")
+NOMES_LON = ("lon", "longitude", "x")
+
+
+def _nome_eixo(ds, candidatos):
+    for nome in candidatos:
+        if nome in ds.variables or nome in ds.coords or nome in ds.dims:
+            return nome
+    raise KeyError(f"Nenhum eixo {candidatos[0]} encontrado no arquivo "
+                   f"(variáveis: {list(ds.variables)}).")
+
+
+def nome_variavel_precip(ds, preferido=None):
+    """Descobre o nome da variável de precipitação em um NetCDF aberto.
+
+    Com ``preferido`` informado (e presente no arquivo), devolve-o direto.
+    Senão tenta os nomes usuais e, por último, a única variável de dados
+    com pelo menos duas dimensões — o caso do MSWEP, cujo nome muda entre
+    versões e cujo ``cdo sinfo`` mostra "unknown"."""
+    if preferido and str(preferido).lower() not in ("auto", "") \
+            and preferido in ds.variables:
+        return preferido
+    for nome in NOMES_PRECIP:
+        if nome in ds.data_vars:
+            return nome
+    eixos = set(NOMES_LAT) | set(NOMES_LON) | {"time", "valid_time", "bnds"}
+    candidatas = [n for n, v in ds.data_vars.items()
+                  if v.ndim >= 2 and n not in eixos
+                  and not n.endswith("_bnds")]
+    if len(candidatas) == 1:
+        return candidatas[0]
+    if candidatas:
+        raise KeyError(
+            f"Mais de uma variável candidata a precipitação "
+            f"({sorted(candidatas)}); informe o nome em "
+            f"'precipitacao: variavel:' no config.yaml.")
+    raise KeyError(f"Nenhuma variável de precipitação encontrada "
+                   f"(variáveis: {list(ds.data_vars)}).")
+
+
+def _indices_recorte(la, lo, recorte):
+    """Índices (fatia em lat, vetor em lon) do recorte espacial pedido.
+
+    ``recorte`` = (lat_sul, lat_norte, lon_oeste, lon_leste) em graus, com
+    longitude em -180..180. Trata arquivos com longitude 0..360 (MSWEP e
+    outros globais) reordenando o eixo. Devolve (idx_lat, idx_lon) ou
+    (None, None) quando não há recorte a fazer."""
+    if recorte is None:
+        return None, None
+    lat_s, lat_n, lon_w, lon_e = (float(x) for x in recorte)
+
+    crescente = la.size < 2 or la[0] <= la[-1]
+    mla = (la >= lat_s) & (la <= lat_n)
+    ila = np.nonzero(mla)[0]
+
+    lo180 = ((np.asarray(lo, dtype=np.float64) + 180.0) % 360.0) - 180.0
+    mlo = (lo180 >= lon_w) & (lo180 <= lon_e)
+    ilo = np.nonzero(mlo)[0]
+    if ilo.size:
+        ilo = ilo[np.argsort(lo180[ilo])]     # garante longitude crescente
+
+    if ila.size == 0 or ilo.size == 0:
+        raise ValueError(
+            f"Recorte {recorte} fora da grade do arquivo "
+            f"(lat {la.min():.2f}..{la.max():.2f}, "
+            f"lon {lo180.min():.2f}..{lo180.max():.2f}).")
+
+    fatia_lat = slice(int(ila[0]), int(ila[-1]) + 1)
+    del crescente
+    return fatia_lat, ilo
+
+
+def le_precip_arquivo(caminho, nome_var=None, recorte=None):
+    """Lê um arquivo de precipitação diária no padrão do pipeline OU num
+    arquivo global bruto (MSWEP), devolvendo (dados[nt,nlat,nlon], lat,
+    lon) com a latitude de sul para norte, longitude crescente em
+    -180..180 e recorte espacial opcional.
+
+    O recorte é aplicado **antes** de carregar os dados (isel preguiçoso),
+    de modo que ler o domínio da América do Sul de um arquivo global
+    3600x1800 não traz a grade inteira para a memória."""
+    with xr.open_dataset(caminho, decode_times=False) as ds:
+        nome = nome_variavel_precip(ds, nome_var)
+        nome_lat = _nome_eixo(ds, NOMES_LAT)
+        nome_lon = _nome_eixo(ds, NOMES_LON)
+        la = np.asarray(ds[nome_lat].values, dtype=np.float64)
+        lo = np.asarray(ds[nome_lon].values, dtype=np.float64)
+
+        var = ds[nome]
+        if var.dims[-2:] == (nome_lon, nome_lat):     # (time, lon, lat)
+            var = var.transpose(..., nome_lat, nome_lon)
+
+        fatia_lat, idx_lon = _indices_recorte(la, lo, recorte)
+        if fatia_lat is not None:
+            var = var.isel({nome_lat: fatia_lat, nome_lon: idx_lon})
+            la = la[fatia_lat]
+            lo = ((lo[idx_lon] + 180.0) % 360.0) - 180.0
+        else:
+            lo = np.asarray(lo, dtype=np.float64)
+
+        dados = np.asarray(var.values, dtype=np.float32)
+
+    if dados.ndim == 2:                  # arquivo sem dimensão tempo
+        dados = dados[np.newaxis, :, :]
+    elif dados.ndim > 3:                 # dimensões extras de tamanho 1
+        dados = dados.reshape((-1,) + dados.shape[-2:])
+
+    if la.size > 1 and la[0] > la[-1]:   # norte->sul: inverte
+        la = la[::-1]
+        dados = dados[:, ::-1, :]
+
+    return dados, la, lo
+
+
+def le_grade_precip(caminho, recorte=None):
+    """Latitudes e longitudes (já recortadas e ordenadas) de um arquivo de
+    precipitação, sem ler o campo — usado para descobrir o domínio do
+    banco (ex.: as faixas de longitude do modo de hora solar)."""
+    with xr.open_dataset(caminho, decode_times=False) as ds:
+        la = np.asarray(ds[_nome_eixo(ds, NOMES_LAT)].values,
+                        dtype=np.float64)
+        lo = np.asarray(ds[_nome_eixo(ds, NOMES_LON)].values,
+                        dtype=np.float64)
+    fatia_lat, idx_lon = _indices_recorte(la, lo, recorte)
+    if fatia_lat is not None:
+        la = la[fatia_lat]
+        lo = ((lo[idx_lon] + 180.0) % 360.0) - 180.0
+    if la.size > 1 and la[0] > la[-1]:
+        la = la[::-1]
+    return la, lo
+
+
+def ler_precipitacao(lista_arquivos, nome_var="prec", recorte=None):
     """Lê e concatena os arquivos de precipitação na ordem da lista e
     INVERTE a dimensão tempo (equivalente ao ``(::-1,:,:)`` do NCL).
 
@@ -144,21 +283,15 @@ def ler_precipitacao(lista_arquivos, nome_var="prec"):
     junto com IMERG de 0,1°) são regradeados por interpolação bilinear
     para a grade de referência — na operação original essa interpolação
     era feita numa etapa anterior do fluxo.
+
+    ``nome_var=None`` detecta a variável automaticamente (MSWEP lido no
+    lugar); ``recorte=(latS,latN,lonW,lonE)`` recorta o domínio na
+    leitura, o que permite usar arquivos globais sem conversão prévia.
     """
     campos = []
     lat = lon = None
     for arq in lista_arquivos:
-        with xr.open_dataset(arq, decode_times=False) as ds:
-            var = ds[nome_var]
-            dados = np.asarray(var.values, dtype=np.float32)
-            if dados.ndim == 2:      # arquivo sem dimensão tempo
-                dados = dados[np.newaxis, :, :]
-            la = np.asarray(ds["lat"].values, dtype=np.float64)
-            lo = np.asarray(ds["lon"].values, dtype=np.float64)
-
-        if la.size > 1 and la[0] > la[-1]:    # norte->sul: inverte
-            la = la[::-1]
-            dados = dados[:, ::-1, :]
+        dados, la, lo = le_precip_arquivo(arq, nome_var, recorte)
 
         if lat is None:
             lat, lon = la, lo                 # grade de referência (1º arquivo)
@@ -236,6 +369,7 @@ def calcula_risco_fogo(arquivo_temp_ur,
                        data_previsao,
                        rb_maximo=0.9,
                        nome_var_precip="prec",
+                       recorte_precip=None,
                        titulo=None,
                        log=print,
                        usar_vegetacao=True,
@@ -273,7 +407,8 @@ def calcula_risco_fogo(arquivo_temp_ur,
     log("Abrindo os arquivos de precipitação.")
     log("")
     precip, lat_prec, lon_prec = ler_precipitacao(lista_arquivos_prec,
-                                                  nome_var_precip)
+                                                  nome_var_precip,
+                                                  recorte_precip)
 
     return calcula_risco_fogo_dados(
         precip_invertida=precip,
@@ -533,15 +668,51 @@ def le_campo_rf(caminho, nome_var=None):
     return dados, lat, lon, nome
 
 
-def agrega_campos(caminhos_dias, arquivo_saida, operacao="media", titulo=None,
-                  data_ref=None, log=print, nome_var=None):
-    """Agrega vários RF diários num único campo (``media`` ou ``maximo``),
-    ignorando valores ausentes, e grava no mesmo formato dos diários.
+def le_fatia_rf(caminho, nome_var=None, i0=None, i1=None):
+    """Lê apenas as linhas [i0:i1] do campo (para o percentil, que precisa
+    de todos os dias em memória e é calculado por blocos de latitude)."""
+    with xr.open_dataset(caminho, decode_times=False) as ds:
+        nome = nome_var if nome_var else next(iter(ds.data_vars))
+        v = ds[nome]
+        fatia = v[..., i0:i1, :] if (i0 is not None) else v
+        dados = np.asarray(fatia.values, dtype=np.float32)
+        if dados.ndim == 3:
+            dados = dados[0]
+        preenche = v.attrs.get("_FillValue",
+                               v.encoding.get("_FillValue", -999.0))
+        return np.where(dados <= (preenche + 1e-3), np.nan, dados)
 
-    Devolve (arquivo_saida, número de dias usados)."""
-    soma = None
-    contagem = None
-    maximo = None
+
+def agrega_campos(caminhos_dias, arquivo_saida, operacao="media", titulo=None,
+                  data_ref=None, log=print, nome_var=None,
+                  limiar=None, percentil=None, linhas_bloco=400):
+    """Agrega vários campos diários num único arquivo.
+
+    ``operacao``:
+      ``media``       média dos dias válidos (padrão);
+      ``maximo``      máximo dos dias válidos;
+      ``frequencia``  nº de dias com valor >= ``limiar`` e o respectivo
+                      percentual dos dias válidos (duas variáveis);
+      ``percentil``   percentil ``percentil`` (0–100) da distribuição dos
+                      dias, calculado por blocos de latitude para não
+                      carregar toda a série na memória.
+
+    Valores ausentes são ignorados ponto a ponto. Devolve
+    (arquivo_saida, número de dias usados)."""
+    if operacao not in ("media", "maximo", "frequencia", "percentil"):
+        raise ValueError(f"Operação desconhecida: '{operacao}'.")
+    if operacao == "frequencia" and limiar is None:
+        raise ValueError("A operação 'frequencia' exige um limiar.")
+    if operacao == "percentil" and percentil is None:
+        raise ValueError("A operação 'percentil' exige o valor (0–100).")
+
+    # --- percentil: passa por blocos de linhas, guardando só o bloco ------
+    if operacao == "percentil":
+        return _agrega_percentil(caminhos_dias, arquivo_saida, percentil,
+                                 titulo, data_ref, log, nome_var,
+                                 linhas_bloco)
+
+    soma = contagem = maximo = acima = None
     lat = lon = None
     usados = 0
 
@@ -551,6 +722,7 @@ def agrega_campos(caminhos_dias, arquivo_saida, operacao="media", titulo=None,
             lat, lon = la, lo
             soma = np.zeros_like(dados, dtype=np.float64)
             contagem = np.zeros(dados.shape, dtype=np.int32)
+            acima = np.zeros(dados.shape, dtype=np.int32)
             maximo = np.full(dados.shape, np.nan, dtype=np.float32)
         elif dados.shape != soma.shape:
             log(f"AVISO: {os.path.basename(caminho)} tem grade "
@@ -561,10 +733,32 @@ def agrega_campos(caminhos_dias, arquivo_saida, operacao="media", titulo=None,
         contagem[valido] += 1
         maximo = np.where(valido & (np.isnan(maximo) | (dados > maximo)),
                           dados, maximo)
+        if limiar is not None:
+            acima += (valido & (dados >= float(limiar))).astype(np.int32)
         usados += 1
 
     if usados == 0:
         raise RuntimeError("Nenhum arquivo diário disponível para agregar.")
+
+    if data_ref is None:
+        data_ref = dt.datetime.now()
+    extras = {"agregacao": operacao, "dias_agregados": str(usados)}
+
+    if operacao == "frequencia":
+        with np.errstate(invalid="ignore"):
+            dias = np.where(contagem > 0, acima, np.nan)
+            pct = np.where(contagem > 0,
+                           100.0 * acima / np.maximum(contagem, 1), np.nan)
+        extras["limiar"] = f"{float(limiar):g}"
+        grava_netcdf_campos(
+            {"dias": (np.round(dias, 0).astype(np.float32),
+                      f"Dias com valor >= {float(limiar):g}", "dia"),
+             "frequencia": (np.round(pct, 1).astype(np.float32),
+                            f"Percentual de dias com valor >= "
+                            f"{float(limiar):g}", "%")},
+            lat, lon, data_ref, arquivo_saida, titulo=titulo,
+            atributos_extras=extras)
+        return arquivo_saida, usados
 
     with np.errstate(invalid="ignore"):
         # Arredondamento feito em float64 (o RF diário já tem 2 decimais,
@@ -574,14 +768,63 @@ def agrega_campos(caminhos_dias, arquivo_saida, operacao="media", titulo=None,
     campo = media if operacao == "media" else maximo.astype(np.float64)
     campo = np.round(campo, 2).astype(np.float32)
 
+    grava_netcdf_rf(campo, lat, lon, data_ref.strftime("%Y%m%d%H"),
+                    arquivo_saida, titulo=titulo, atributos_extras=extras)
+    return arquivo_saida, usados
+
+
+def _agrega_percentil(caminhos_dias, arquivo_saida, percentil, titulo,
+                      data_ref, log, nome_var, linhas_bloco):
+    """Percentil da distribuição diária, por blocos de latitude."""
+    primeiro, lat, lon, _ = le_campo_rf(caminhos_dias[0], nome_var)
+    nlat = lat.size
+    saida = np.full(primeiro.shape, np.nan, dtype=np.float64)
+    usados = len(caminhos_dias)
+
+    for i0 in range(0, nlat, int(linhas_bloco)):
+        i1 = min(i0 + int(linhas_bloco), nlat)
+        pilha = []
+        for caminho in caminhos_dias:
+            fatia = le_fatia_rf(caminho, nome_var, i0, i1)
+            if fatia.shape != (i1 - i0, lon.size):
+                log(f"AVISO: {os.path.basename(caminho)} em grade "
+                    f"diferente — ignorado.")
+                continue
+            pilha.append(fatia)
+        if not pilha:
+            continue
+        with np.errstate(invalid="ignore", all="ignore"):
+            saida[i0:i1] = np.nanpercentile(
+                np.stack(pilha).astype(np.float64), float(percentil), axis=0)
+
     if data_ref is None:
         data_ref = dt.datetime.now()
     grava_netcdf_rf(
-        campo, lat, lon, data_ref.strftime("%Y%m%d%H"), arquivo_saida,
-        titulo=titulo,
-        atributos_extras={"agregacao": operacao,
+        np.round(saida, 2).astype(np.float32), lat, lon,
+        data_ref.strftime("%Y%m%d%H"), arquivo_saida, titulo=titulo,
+        atributos_extras={"agregacao": f"percentil {float(percentil):g}",
                           "dias_agregados": str(usados)})
     return arquivo_saida, usados
+
+
+def operacoes_pedidas(args):
+    """Lista de (rótulo, operação, kwargs) conforme as opções da linha de
+    comando — compartilhada pelo RF previsto, RF observado e FWI.
+
+    ``--maximo`` substitui a média; ``--frequencia`` e ``--percentil``
+    geram arquivos ADICIONAIS, nos mesmos agrupamentos (período e/ou mês).
+    """
+    base = ("MAXIMO", "maximo", {}) if getattr(args, "maximo", False) \
+        else ("MEDIA", "media", {})
+    ops = [base]
+    limiar = getattr(args, "frequencia", None)
+    if limiar is not None:
+        ops.append((f"FREQ{float(limiar):g}", "frequencia",
+                    {"limiar": float(limiar)}))
+    pct = getattr(args, "percentil", None)
+    if pct is not None:
+        ops.append((f"P{int(pct)}", "percentil", {"percentil": float(pct)}))
+    return ops
 
 
 def agrupa_por_mes(dias):
@@ -590,6 +833,39 @@ def agrupa_por_mes(dias):
     for d in dias:
         grupos.setdefault((d.year, d.month), []).append(d)
     return sorted(grupos.items())
+
+
+def grava_netcdf_campos(variaveis, lat, lon, quando, arquivo_saida,
+                        titulo=None, atributos_extras=None):
+    """Grava um NetCDF com várias variáveis 2D.
+
+    ``variaveis``: dict {nome: (campo, descricao, unidade)}."""
+    dados = {nome: (("time", "lat", "lon"),
+                    np.asarray(campo, dtype=np.float32)[np.newaxis],
+                    {"long_name": desc, "units": unidade})
+             for nome, (campo, desc, unidade) in variaveis.items()}
+    ds = xr.Dataset(
+        dados,
+        coords={
+            "time": [quando],
+            "lat": ("lat", np.asarray(lat, dtype=np.float64),
+                    {"standard_name": "latitude", "units": "degrees_north"}),
+            "lon": ("lon", np.asarray(lon, dtype=np.float64),
+                    {"standard_name": "longitude", "units": "degrees_east"}),
+        },
+        attrs={"title": titulo or "Agregacao do Risco de Fogo",
+               "history": f"gerado em {dt.datetime.now():%Y-%m-%d %H:%M}"},
+    )
+    if atributos_extras:
+        ds.attrs.update(atributos_extras)
+    enc = {nome: {"dtype": "float32", "zlib": True, "complevel": 4,
+                  "_FillValue": FILL_VALUE} for nome in variaveis}
+    enc["time"] = {"units": "hours since 1900-01-01 00:00:00",
+                   "calendar": "standard", "dtype": "float64"}
+    os.makedirs(os.path.dirname(os.path.abspath(arquivo_saida)),
+                exist_ok=True)
+    ds.to_netcdf(arquivo_saida, format="NETCDF4_CLASSIC", encoding=enc)
+    return arquivo_saida
 
 
 # ---------------------------------------------------------------------------
