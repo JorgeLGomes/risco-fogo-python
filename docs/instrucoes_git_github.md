@@ -155,7 +155,12 @@ git commit -m "Baixa o vento a 10 m do GFS (insumo do FWI previsto)
   download enxuto de quem so precisa do RF (~2 MB/horario contra ~3 MB)
 - teste_prepara_gfs: mensagens de vento no .idx, byte-ranges, arquivo
   proprio e conversao para km/h pela leitura do FWI
-- Manual v2.3: secao 6.1 (vento) e 7.4 (roteiro do FWI previsto)"
+- prepara_gfs: 404 nao e mais repetido (rodada ainda nao publicada) e a
+  mensagem explica o que fazer; --auto-rodada recua de 6 em 6 h ate a
+  rodada mais recente disponivel (--voltar-rodadas, padrao 4)
+- teste_prepara_gfs: mensagens de vento no .idx e fallback de rodada
+- Manual v2.4: secao 6.1 (vento e rodada nao publicada) e 7.4 (roteiro
+  do FWI previsto)"
 
 git push origin main
 ```

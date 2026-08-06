@@ -207,6 +207,10 @@ def indices_dominio(lat, lon, lat_s, lat_n, lon_w, lon_e):
 # Download (urllib, com tentativas)
 # ---------------------------------------------------------------------------
 
+class NaoPublicado(RuntimeError):
+    """A rodada/horário pedido ainda não existe no servidor (HTTP 404)."""
+
+
 def _http(url, faixa=None, timeout=120):
     ultimo = None
     for tentativa in range(1, TENTATIVAS + 1):
@@ -221,14 +225,56 @@ def _http(url, faixa=None, timeout=120):
                 raise RuntimeError("o servidor devolveu HTML (erro/aviso) "
                                    "em vez de dados")
             return dados
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                # Repetir não adianta: o arquivo simplesmente não está lá
+                # (rodada ainda não publicada, ou horário inexistente).
+                raise NaoPublicado(f"404 em {url}") from exc
+            ultimo = exc
         except Exception as exc:  # noqa: BLE001
             ultimo = exc
-            espera = 20 * tentativa
-            print(f"  {url.split('/')[-1]}: tentativa {tentativa}/"
-                  f"{TENTATIVAS} falhou ({exc}); aguardando {espera}s",
-                  file=sys.stderr)
-            time.sleep(espera)
+        espera = 20 * tentativa
+        print(f"  {url.split('/')[-1]}: tentativa {tentativa}/"
+              f"{TENTATIVAS} falhou ({ultimo}); aguardando {espera}s",
+              file=sys.stderr)
+        time.sleep(espera)
     raise RuntimeError(f"Falha definitiva em {url}: {ultimo}")
+
+
+# ---------------------------------------------------------------------------
+# Disponibilidade da rodada
+# ---------------------------------------------------------------------------
+
+def rodada_publicada(metodo, data, rodada, fhora=6):
+    """Diz se a rodada já está no servidor, testando o índice .idx de um
+    horário (o método 'filtro' não tem .idx: testa o próprio recorte)."""
+    fff = f"{fhora:03d}"
+    if metodo in ("s3", "nomads"):
+        modelo_url = URL_S3 if metodo == "s3" else URL_NOMADS_PUB
+        url = modelo_url.format(data=data, rodada=rodada, fff=fff) + ".idx"
+    else:
+        return True                     # sem como testar barato: tenta baixar
+    try:
+        _http(url, timeout=60)
+        return True
+    except NaoPublicado:
+        return False
+
+
+def ultima_rodada_disponivel(metodo, data, rodada, voltar=4, log=print):
+    """Procura a rodada mais recente já publicada, voltando de 6 em 6 h a
+    partir da pedida. Devolve (data, rodada) ou (None, None)."""
+    inicio = dt.datetime.strptime(data + rodada, "%Y%m%d%H")
+    for k in range(voltar + 1):
+        quando = inicio - dt.timedelta(hours=6 * k)
+        d, r = quando.strftime("%Y%m%d"), quando.strftime("%H")
+        if rodada_publicada(metodo, d, r):
+            if k:
+                log(f"Rodada {inicio:%Y%m%d%H} ainda não publicada; "
+                    f"usando {d}{r} ({6 * k} h antes).")
+            return d, r
+        log(f"  rodada {d}{r} ainda não publicada no servidor")
+    return None, None
 
 
 def baixa_fhora(metodo, data, rodada, fhora, dominio, vento=True):
@@ -377,6 +423,14 @@ def main():
                         help="Data da rodada YYYYMMDD (padrão: hoje UTC).")
     parser.add_argument("--rodada", default="00",
                         choices=["00", "06", "12", "18"])
+    parser.add_argument("--auto-rodada", action="store_true",
+                        help="Se a rodada pedida ainda não estiver "
+                             "publicada, recua de 6 em 6 h até achar a mais "
+                             "recente disponível (o GFS 00 UTC costuma "
+                             "aparecer ~3,5 h depois do horário sinótico).")
+    parser.add_argument("--voltar-rodadas", type=int, default=4,
+                        help="Quantas rodadas recuar com --auto-rodada "
+                             "(padrão: 4 = 24 h).")
     parser.add_argument("--dias", type=int, default=16,
                         help="Alcance em dias (padrão: 16; máx. do GFS).")
     parser.add_argument("--passo", type=int, default=6,
@@ -416,7 +470,17 @@ def main():
     base = (args.base or cfg["base"]).rstrip("/")
 
     data = args.data or dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d")
-    modelo = data + args.rodada
+    rodada = args.rodada
+    if args.auto_rodada and not args.simular:
+        data_ok, rodada_ok = ultima_rodada_disponivel(
+            args.metodo, data, rodada, args.voltar_rodadas)
+        if data_ok is None:
+            sys.exit(f"Erro: nenhuma rodada publicada entre "
+                     f"{data}{rodada} e {args.voltar_rodadas} rodadas "
+                     f"antes. Tente mais tarde ou use --data/--rodada.")
+        data, rodada = data_ok, rodada_ok
+    args.rodada = rodada
+    modelo = data + rodada
     inicio = dt.datetime.strptime(modelo, "%Y%m%d%H")
     dominio = tuple(float(x) for x in args.dominio.split(","))
 
@@ -480,7 +544,7 @@ def main():
     com_vento = not args.sem_vento
 
     def processa(fhora):
-        bruto = baixa_fhora(args.metodo, data, args.rodada, fhora, dominio,
+        bruto = baixa_fhora(args.metodo, data, rodada, fhora, dominio,
                             vento=com_vento)
         with _LOCK_DECODE:
             return fhora, decodifica_grib(bruto, dominio, vento=com_vento)
@@ -489,7 +553,17 @@ def main():
         futuros = [ex.submit(processa, h) for h in fhoras]
         feitos = 0
         for fut in concurrent.futures.as_completed(futuros):
-            fhora, res = fut.result()
+            try:
+                fhora, res = fut.result()
+            except NaoPublicado as exc:
+                sys.exit(
+                    f"Erro: a rodada {modelo} ainda não está publicada no "
+                    f"servidor ({exc}).\n"
+                    f"O GFS 00 UTC costuma aparecer ~3,5 h depois do "
+                    f"horário sinótico (e completa em ~5 h). Opções:\n"
+                    f"  - esperar e repetir;\n"
+                    f"  - usar a rodada anterior: --data/--rodada;\n"
+                    f"  - deixar o script escolher: --auto-rodada.")
             resultados[fhora] = res
             feitos += 1
             if feitos % 10 == 0 or feitos == len(fhoras):

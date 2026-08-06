@@ -2,7 +2,7 @@
 
 ## Risco de Fogo Previsto em Python — INPE_FireRiskModel v2.2
 
-**Versão:** 2.3 · 5 de agosto de 2026
+**Versão:** 2.4 · 5 de agosto de 2026
 **Substitui:** `rf_previsto_1-5dias_2023.sh` e `rf_previsto_1-2_semanas_2024.sh` (bash + NCL)
 
 ---
@@ -351,6 +351,15 @@ python3 prepara_gfs.py --metodo nomads          # se a AWS estiver bloqueada
 ```
 
 Opções principais: `--data`/`--rodada` (rodada), `--dias` (alcance, padrão 16), `--passo` (validades, padrão 6 h), `--dominio latS,latN,lonW,lonE`, `--acumulo 24h|dia`, `--jobs` (downloads simultâneos), `--base`/`--config` (destino), `--sem-vento`, `--sobrescrever` e `--simular`.
+
+**Rodada ainda não publicada.** O GFS 00 UTC só começa a aparecer nos servidores ~3,5 h depois do horário sinótico (e completa em ~5 h), então uma execução de madrugada encontra 404 em todos os horários. O script trata isso de duas formas: um 404 **não é repetido** (não adianta insistir — o arquivo não está lá) e a mensagem diz o que fazer; e a opção `--auto-rodada` faz o script **recuar de 6 em 6 horas** até achar a rodada mais recente já publicada (`--voltar-rodadas`, padrão 4 = 24 h):
+
+```bash
+python3 prepara_gfs.py --config config.yaml --auto-rodada
+# Rodada 2026080600 ainda não publicada; usando 2026080518 (6 h antes).
+```
+
+Para uma rodada operacional agendada no cron, `--auto-rodada` é o modo recomendado: a execução nunca falha por chegar cedo demais, apenas usa a rodada anterior.
 
 Sobre a precipitação: o APCP do GFS vem em "baldes" (6 h até +240 h; 12 h de +240 h a +384 h). O acumulado diário de cada validade soma os baldes que cobrem as 24 h anteriores, com o intervalo lido do próprio GRIB — a transição 6 h/12 h é automática, e validades sem arquivo além de +240 h (fora do passo de 12 h) são puladas com aviso.
 

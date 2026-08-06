@@ -167,5 +167,30 @@ assert "vento" in pg.decodifica_grib.__doc__
 assert "vento" in pg.baixa_fhora.__doc__
 print("Teste 6 (vento 10 m: arquivo proprio, km/h, leitura do FWI) ok")
 
+# ---------------------------------------------------------------------------
+# 7. Disponibilidade da rodada (sem rede: substitui o teste HTTP)
+# ---------------------------------------------------------------------------
+_publicadas = {("20260805", "18"), ("20260805", "12")}
+_original = pg.rodada_publicada
+pg.rodada_publicada = lambda metodo, data, rodada, fhora=6: \
+    (data, rodada) in _publicadas
+try:
+    msgs = []
+    d, r = pg.ultima_rodada_disponivel("s3", "20260806", "00", 4,
+                                       log=msgs.append)
+    assert (d, r) == ("20260805", "18"), (d, r)      # recua 6 h
+    assert any("nao publicada" in m or "não publicada" in m for m in msgs)
+
+    # Nenhuma publicada dentro do limite -> (None, None)
+    pg.rodada_publicada = lambda metodo, data, rodada, fhora=6: False
+    assert pg.ultima_rodada_disponivel("s3", "20260806", "00", 2,
+                                       log=lambda *_: None) == (None, None)
+finally:
+    pg.rodada_publicada = _original
+
+# 404 vira NaoPublicado (sem repetir tentativas)
+assert issubclass(pg.NaoPublicado, RuntimeError)
+print("Teste 7 (rodada nao publicada: fallback e erro claro) ok")
+
 print()
 print("TODOS OS TESTES DO PREPARA_GFS PASSARAM")
